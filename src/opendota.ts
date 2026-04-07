@@ -26,6 +26,19 @@ export type OpenDotaHeroMatchup = {
   wins: number;
 };
 
+export type OpenDotaHeroAvgKills = {
+  hero_id: number;
+  avg_kills: number;
+};
+
+export type OpenDotaHeroAvgKda = {
+  hero_id: number;
+  avg_kills: number;
+  avg_deaths: number;
+  avg_assists: number;
+};
+
+
 type CacheEntry<T> = {
   v: number;
   ts: number;
@@ -101,6 +114,93 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
   const data = await fetchJson<OpenDotaHeroStats[]>("/heroStats");
   setCached("heroStats", data);
   return data;
+}
+
+export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<OpenDotaHeroAvgKills[]> {
+  const key = `heroAvgKills:${sampleLimit}`;
+  const cached = getCached<OpenDotaHeroAvgKills[]>(key, 1000 * 60 * 60 * 24); // 24h
+  if (cached) return cached;
+  const limits = [sampleLimit, 150000, 90000, 50000];
+  for (const limit of limits) {
+    try {
+      const sql = [
+        "SELECT hero_id, AVG(kills)::float AS avg_kills",
+        "FROM (",
+        `SELECT hero_id, kills, match_id FROM player_matches ORDER BY match_id DESC LIMIT ${limit}`,
+        ") t",
+        "GROUP BY hero_id"
+      ].join(" ");
+
+      const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
+        `/explorer?sql=${encodeURIComponent(sql)}`
+      );
+      if (data.err) continue;
+
+      const rows = (data.rows ?? [])
+        .map((row) => ({
+          hero_id: Number(row.hero_id),
+          avg_kills: Number(row.avg_kills)
+        }))
+        .filter(
+          (row) => Number.isFinite(row.hero_id) && Number.isFinite(row.avg_kills) && row.hero_id > 0
+        );
+
+      if (rows.length > 0) {
+        setCached(key, rows);
+        return rows;
+      }
+    } catch {
+      // try smaller sample on timeout / network issues
+    }
+  }
+  return [];
+}
+
+export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenDotaHeroAvgKda[]> {
+  const key = `heroAvgKda:${sampleLimit}`;
+  const cached = getCached<OpenDotaHeroAvgKda[]>(key, 1000 * 60 * 60 * 24); // 24h
+  if (cached) return cached;
+  const limits = [sampleLimit, 150000, 90000, 50000];
+  for (const limit of limits) {
+    try {
+      const sql = [
+        "SELECT hero_id, AVG(kills)::float AS avg_kills, AVG(deaths)::float AS avg_deaths, AVG(assists)::float AS avg_assists",
+        "FROM (",
+        `SELECT hero_id, kills, deaths, assists, match_id FROM player_matches ORDER BY match_id DESC LIMIT ${limit}`,
+        ") t",
+        "GROUP BY hero_id"
+      ].join(" ");
+
+      const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
+        `/explorer?sql=${encodeURIComponent(sql)}`
+      );
+      if (data.err) continue;
+
+      const rows = (data.rows ?? [])
+        .map((row) => ({
+          hero_id: Number(row.hero_id),
+          avg_kills: Number(row.avg_kills),
+          avg_deaths: Number(row.avg_deaths),
+          avg_assists: Number(row.avg_assists)
+        }))
+        .filter(
+          (row) =>
+            Number.isFinite(row.hero_id) &&
+            Number.isFinite(row.avg_kills) &&
+            Number.isFinite(row.avg_deaths) &&
+            Number.isFinite(row.avg_assists) &&
+            row.hero_id > 0
+        );
+
+      if (rows.length > 0) {
+        setCached(key, rows);
+        return rows;
+      }
+    } catch {
+      // try smaller sample on timeout / network issues
+    }
+  }
+  return [];
 }
 
 export async function fetchHeroMatchupsCached(heroId: number): Promise<OpenDotaHeroMatchup[]> {

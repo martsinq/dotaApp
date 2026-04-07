@@ -54,45 +54,57 @@ function App() {
     }
   };
 
+  const containerClass =
+    mode === "cm"
+      ? "container container-cm"
+      : mode === "meta"
+        ? "container container-meta"
+        : "container";
+
   return (
-    <div className={mode === "cm" ? "container container-cm" : "container"}>
+    <div className={containerClass}>
       <header className="top-nav">
         <button
           className={mode === "draft" ? "top-nav-btn active" : "top-nav-btn"}
           onClick={() => navigate("draft")}
         >
-          Драфт
+          Анализ драфта
         </button>
         <button
           className={mode === "cm" ? "top-nav-btn active" : "top-nav-btn"}
           onClick={() => navigate("cm")}
         >
-          CM vs бот
+          Драфт vs бота
         </button>
         <button
           className={mode === "meta" ? "top-nav-btn active" : "top-nav-btn"}
           onClick={() => navigate("meta")}
         >
-          Мета героев
+          Мета
         </button>
-        <button
-          className={mode === "invoker" ? "top-nav-btn active" : "top-nav-btn"}
-          onClick={() => navigate("invoker")}
-        >
-          Invoker Trainer
-        </button>
-        <button
-          className={mode === "armlet" ? "top-nav-btn active" : "top-nav-btn"}
-          onClick={() => navigate("armlet")}
-        >
-          Armlet Toggle
-        </button>
-        <button
-          className={mode === "dispel" ? "top-nav-btn active" : "top-nav-btn"}
-          onClick={() => navigate("dispel")}
-        >
-          BKB / диспелы
-        </button>
+        <div className="top-nav-dropdown">
+          <button
+            className={
+              mode === "invoker" || mode === "armlet" || mode === "dispel"
+                ? "top-nav-btn active"
+                : "top-nav-btn"
+            }
+            type="button"
+          >
+            Мини игры
+          </button>
+          <div className="top-nav-dropdown-menu">
+            <button className="top-nav-dropdown-item" onClick={() => navigate("invoker")}>
+              Invoker trainer
+            </button>
+            <button className="top-nav-dropdown-item" onClick={() => navigate("armlet")}>
+              Armlet togle
+            </button>
+            <button className="top-nav-dropdown-item" onClick={() => navigate("dispel")}>
+              Dispell
+            </button>
+          </div>
+        </div>
       </header>
 
       {mode === "draft" && <Draft />}

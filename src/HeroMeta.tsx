@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  fetchHeroAvgKdaCached,
   fetchHeroStatsCached,
   pubWinRatePercent,
   type OpenDotaHeroStats
@@ -8,12 +9,27 @@ import { useMemo as useMemoDraft } from "react";
 
 type HeroMetaRow = {
   hero: OpenDotaHeroStats;
-  winRate: number;
-  games: number;
+  overallWinRate: number;
+  overallGames: number;
+  overallBans: number;
+  proBans: number;
+  proPicks: number;
+  avgKills: number | null;
+  avgDeaths: number | null;
+  avgAssists: number | null;
 };
 
-type SortKey = "name" | "winRate" | "games" | "pickRate";
+type SortKey =
+  | "name"
+  | "winRate"
+  | "pickRate"
+  | "banRate"
+  | "avgKills"
+  | "avgDeaths"
+  | "avgAssists"
+  | "kdaRatio";
 type SortDir = "asc" | "desc";
+type BracketFilter = "all" | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 type RoleFilterKey = "Carry" | "Mid" | "Offlane" | "Soft support" | "Hard support";
 
@@ -185,6 +201,43 @@ const HARD_SUPPORT_HERO_NAMES = normalizeNames([
   "Winter Wyvern"
 ]);
 
+const BRACKET_OPTIONS: Array<{ value: BracketFilter; label: string }> = [
+  { value: "all", label: "Все ранги" },
+  { value: 1, label: "Herald" },
+  { value: 2, label: "Guardian" },
+  { value: 3, label: "Crusader" },
+  { value: 4, label: "Archon" },
+  { value: 5, label: "Legend" },
+  { value: 6, label: "Ancient" },
+  { value: 7, label: "Divine" },
+  { value: 8, label: "Immortal" }
+];
+
+function readNumericStat(hero: OpenDotaHeroStats, key: string): number {
+  const value = (hero as Record<string, unknown>)[key];
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function bracketPick(hero: OpenDotaHeroStats, bracket: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8): number {
+  const direct = readNumericStat(hero, `${bracket}_pick`);
+  if (bracket !== 8 || direct > 0) return direct;
+  // Some snapshots may not fill 8_*; fallback to the highest available bracket.
+  return readNumericStat(hero, "7_pick");
+}
+
+function bracketWin(hero: OpenDotaHeroStats, bracket: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8): number {
+  const direct = readNumericStat(hero, `${bracket}_win`);
+  if (bracket !== 8 || direct > 0) return direct;
+  return readNumericStat(hero, "7_win");
+}
+
+function bracketBan(hero: OpenDotaHeroStats, bracket: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8): number {
+  const direct = readNumericStat(hero, `${bracket}_ban`);
+  if (bracket !== 8 || direct > 0) return direct;
+  return readNumericStat(hero, "7_ban");
+}
+
 export function HeroMeta() {
   const [rows, setRows] = useState<HeroMetaRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -193,6 +246,7 @@ export function HeroMeta() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [search, setSearch] = useState("");
   const [selectedRoles, setSelectedRoles] = useState<RoleFilterKey[]>([]);
+  const [selectedBracket, setSelectedBracket] = useState<BracketFilter>("all");
   const [isRoleFilterOpen, setIsRoleFilterOpen] = useState(false);
   const roleFilterWrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -202,8 +256,17 @@ export function HeroMeta() {
       try {
         setIsLoading(true);
         setError(null);
-        const stats = await fetchHeroStatsCached();
+        const [stats, avgKdaRows] = await Promise.all([
+          fetchHeroStatsCached(),
+          fetchHeroAvgKdaCached()
+        ]);
         if (cancelled) return;
+        const avgKdaByHero = new Map<number, { kills: number; deaths: number; assists: number }>(
+          avgKdaRows.map((row) => [
+            row.hero_id,
+            { kills: row.avg_kills, deaths: row.avg_deaths, assists: row.avg_assists }
+          ])
+        );
 
         const next: HeroMetaRow[] = stats.map((h) => {
           const games =
@@ -215,10 +278,25 @@ export function HeroMeta() {
             h["6_pick"] +
             h["7_pick"] +
             h["8_pick"];
+          const bans =
+            readNumericStat(h, "1_ban") +
+            readNumericStat(h, "2_ban") +
+            readNumericStat(h, "3_ban") +
+            readNumericStat(h, "4_ban") +
+            readNumericStat(h, "5_ban") +
+            readNumericStat(h, "6_ban") +
+            readNumericStat(h, "7_ban") +
+            readNumericStat(h, "8_ban");
           return {
             hero: h,
-            winRate: pubWinRatePercent(h),
-            games
+            overallWinRate: pubWinRatePercent(h),
+            overallGames: games,
+            overallBans: bans,
+            proBans: readNumericStat(h, "pro_ban"),
+            proPicks: readNumericStat(h, "pro_pick"),
+            avgKills: avgKdaByHero.get(h.id)?.kills ?? null,
+            avgDeaths: avgKdaByHero.get(h.id)?.deaths ?? null,
+            avgAssists: avgKdaByHero.get(h.id)?.assists ?? null
           };
         });
         setRows(next);
@@ -233,10 +311,20 @@ export function HeroMeta() {
     };
   }, []);
 
-  const totalGames = useMemo(
-    () => rows.reduce((acc, r) => acc + r.games, 0),
-    [rows]
-  );
+  const totalGames = useMemo(() => {
+    if (selectedBracket === "all") {
+      return rows.reduce((acc, r) => acc + r.overallGames, 0);
+    }
+    return rows.reduce((acc, r) => acc + bracketPick(r.hero, selectedBracket), 0);
+  }, [rows, selectedBracket]);
+
+  const totalBans = useMemo(() => {
+    if (selectedBracket === "all") {
+      return rows.reduce((acc, r) => acc + r.overallBans, 0);
+    }
+    return rows.reduce((acc, r) => acc + bracketBan(r.hero, selectedBracket), 0);
+  }, [rows, selectedBracket]);
+  const totalProPicks = useMemo(() => rows.reduce((acc, r) => acc + r.proPicks, 0), [rows]);
 
   const visibleRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -255,13 +343,38 @@ export function HeroMeta() {
     }
 
     const withMeta = filtered.map((r) => {
+      const games =
+        selectedBracket === "all"
+          ? r.overallGames
+          : bracketPick(r.hero, selectedBracket);
+      const winRate =
+        selectedBracket === "all"
+          ? r.overallWinRate
+          : games > 0
+            ? (bracketWin(r.hero, selectedBracket) / games) * 100
+            : 50;
+      const bans =
+        selectedBracket === "all"
+          ? r.overallBans
+          : bracketBan(r.hero, selectedBracket);
+
       // heroStats суммируются по героям (каждый матч даёт ~10 пиков).
       // Частота пика как % матчей: games / (totalGames / 10) * 100.
-      const pickRate =
-        totalGames > 0 ? (r.games * 10 * 100) / totalGames : 0;
+      const pickRate = totalGames > 0 ? (games * 10 * 100) / totalGames : 0;
+      // Ban rate from selected rank bans, fallback to OpenDota pro_ban/pro_pick when rank bans are missing.
+      const estimatedProMatches = totalProPicks > 0 ? totalProPicks / 10 : 0;
+      const banRate =
+        totalBans > 0 && games + bans > 0
+          ? (bans * 100) / (games + bans)
+          : r.proBans > 0 && estimatedProMatches > 0
+            ? (r.proBans * 100) / estimatedProMatches
+            : null;
       return {
         ...r,
-        pickRate
+        games,
+        winRate,
+        pickRate,
+        banRate
       };
     });
 
@@ -275,14 +388,42 @@ export function HeroMeta() {
       if (sortBy === "winRate") {
         return (a.winRate - b.winRate) * dir;
       }
-      if (sortBy === "games") {
-        return (a.games - b.games) * dir;
+      if (sortBy === "banRate") {
+        const av = a.banRate ?? Number.NEGATIVE_INFINITY;
+        const bv = b.banRate ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgKills") {
+        const av = a.avgKills ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgKills ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgDeaths") {
+        const av = a.avgDeaths ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgDeaths ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgAssists") {
+        const av = a.avgAssists ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgAssists ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "kdaRatio") {
+        const aKda =
+          a.avgKills != null && a.avgAssists != null && a.avgDeaths != null && a.avgDeaths > 0
+            ? (a.avgKills + a.avgAssists) / a.avgDeaths
+            : Number.NEGATIVE_INFINITY;
+        const bKda =
+          b.avgKills != null && b.avgAssists != null && b.avgDeaths != null && b.avgDeaths > 0
+            ? (b.avgKills + b.avgAssists) / b.avgDeaths
+            : Number.NEGATIVE_INFINITY;
+        return (aKda - bKda) * dir;
       }
       return (a.pickRate - b.pickRate) * dir;
     });
 
     return sorted;
-  }, [rows, sortBy, sortDir, totalGames, search, selectedRoles]);
+  }, [rows, sortBy, sortDir, totalGames, totalBans, totalProPicks, search, selectedRoles, selectedBracket]);
 
   const formatPercent = (value: number): string => `${value.toFixed(1)}%`;
 
@@ -331,7 +472,7 @@ export function HeroMeta() {
       <div className="card hero-meta-content">
         <h1>Мета героев</h1>
         <p className="subtitle">
-          Винрейт и популярность героев по данным OpenDota heroStats.
+          Винрейт и популярность героев по данным OpenDota heroStats, включая разрез по MMR.
         </p>
         {error && <div className="error-banner">{error}</div>}
 
@@ -347,6 +488,24 @@ export function HeroMeta() {
             />
           </div>
           <div className="hero-meta-filters" ref={roleFilterWrapRef}>
+            <label className="hero-meta-bracket-filter">
+              <span>MMR:</span>
+              <select
+                className="hero-input"
+                value={String(selectedBracket)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedBracket(value === "all" ? "all" : (Number(value) as BracketFilter));
+                }}
+                disabled={isLoading}
+              >
+                {BRACKET_OPTIONS.map((option) => (
+                  <option key={String(option.value)} value={String(option.value)}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               className={
@@ -420,15 +579,39 @@ export function HeroMeta() {
                   </th>
                   <th
                     className="hero-meta-th-sortable"
-                    onClick={() => handleSort("games")}
-                  >
-                    Пиков {sortIndicator("games")}
-                  </th>
-                  <th
-                    className="hero-meta-th-sortable"
                     onClick={() => handleSort("pickRate")}
                   >
                     Частота пика {sortIndicator("pickRate")}
+                  </th>
+                  <th
+                    className="hero-meta-th-sortable"
+                    onClick={() => handleSort("banRate")}
+                  >
+                    Ban rate {sortIndicator("banRate")}
+                  </th>
+                  <th
+                    className="hero-meta-th-sortable"
+                    onClick={() => handleSort("avgKills")}
+                  >
+                    K {sortIndicator("avgKills")}
+                  </th>
+                  <th
+                    className="hero-meta-th-sortable"
+                    onClick={() => handleSort("avgDeaths")}
+                  >
+                    D {sortIndicator("avgDeaths")}
+                  </th>
+                  <th
+                    className="hero-meta-th-sortable"
+                    onClick={() => handleSort("avgAssists")}
+                  >
+                    A {sortIndicator("avgAssists")}
+                  </th>
+                  <th
+                    className="hero-meta-th-sortable"
+                    onClick={() => handleSort("kdaRatio")}
+                  >
+                    KDA {sortIndicator("kdaRatio")}
                   </th>
                 </tr>
               </thead>
@@ -438,6 +621,13 @@ export function HeroMeta() {
                     totalGames === 0
                       ? 0
                       : (row.games * 10 * 100) / totalGames;
+                  const kda =
+                    row.avgKills != null &&
+                    row.avgAssists != null &&
+                    row.avgDeaths != null &&
+                    row.avgDeaths > 0
+                      ? (row.avgKills + row.avgAssists) / row.avgDeaths
+                      : null;
                   return (
                     <tr key={row.hero.id}>
                       <td className="hero-meta-hero">
@@ -446,8 +636,12 @@ export function HeroMeta() {
                       </td>
                       <td>{describeHeroRole(row.hero)}</td>
                       <td>{formatPercent(row.winRate)}</td>
-                      <td>{row.games.toLocaleString("ru-RU")}</td>
                       <td>{formatPercent(pickRate)}</td>
+                      <td>{formatPercent(row.banRate ?? 0)}</td>
+                      <td>{row.avgKills == null ? "—" : row.avgKills.toFixed(1)}</td>
+                      <td>{row.avgDeaths == null ? "—" : row.avgDeaths.toFixed(1)}</td>
+                      <td>{row.avgAssists == null ? "—" : row.avgAssists.toFixed(1)}</td>
+                      <td>{kda == null ? "—" : kda.toFixed(2)}</td>
                     </tr>
                   );
                 })}
@@ -455,10 +649,6 @@ export function HeroMeta() {
             </table>
           </div>
         )}
-        <p className="hint hero-meta-hint">
-          Данные по пабам, без деления по рейтингу. Значения иногда могут отличаться от реального
-          винрейта в твоём рейтинговом диапазоне.
-        </p>
       </div>
     </div>
   );

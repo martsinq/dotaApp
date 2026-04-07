@@ -3,36 +3,39 @@ import type { TeamKey } from "./draftCmScoring";
 export type CaptainStep = { action: "ban" | "pick"; team: TeamKey };
 
 /**
- * Captain's Mode после патча 7.40 (Radiant = первая сторона / первый пик).
- * Первая фаза банов: первая — первая — вторая — вторая — первая — вторая — вторая.
- * Третья фаза банов: первая — вторая — первая — вторая.
- * Средняя тройка банов подобрана так, чтобы у каждой стороны было ровно 7 банов (как в CM).
+ * Порядок CM по пользовательской последовательности:
+ * ban2 ban2 ban1 ban1 ban2 ban1 ban1
+ * pick2 pick1
+ * ban2 ban2 ban1
+ * pick1 pick2 pick2 pick1 pick1 pick2
+ * ban2 ban1 ban1 ban2
+ * pick2 pick1
  */
 export const CM_STEPS: CaptainStep[] = [
-  { action: "ban", team: "radiant" },
-  { action: "ban", team: "radiant" },
   { action: "ban", team: "dire" },
   { action: "ban", team: "dire" },
   { action: "ban", team: "radiant" },
-  { action: "ban", team: "dire" },
-  { action: "ban", team: "dire" },
-  { action: "pick", team: "radiant" },
-  { action: "pick", team: "dire" },
-  { action: "ban", team: "radiant" },
   { action: "ban", team: "radiant" },
   { action: "ban", team: "dire" },
-  { action: "pick", team: "radiant" },
+  { action: "ban", team: "radiant" },
+  { action: "ban", team: "radiant" },
   { action: "pick", team: "dire" },
   { action: "pick", team: "radiant" },
-  { action: "pick", team: "dire" },
-  { action: "pick", team: "radiant" },
-  { action: "pick", team: "dire" },
-  { action: "ban", team: "radiant" },
+  { action: "ban", team: "dire" },
   { action: "ban", team: "dire" },
   { action: "ban", team: "radiant" },
-  { action: "ban", team: "dire" },
   { action: "pick", team: "radiant" },
-  { action: "pick", team: "dire" }
+  { action: "pick", team: "dire" },
+  { action: "pick", team: "dire" },
+  { action: "pick", team: "radiant" },
+  { action: "pick", team: "radiant" },
+  { action: "pick", team: "dire" },
+  { action: "ban", team: "dire" },
+  { action: "ban", team: "radiant" },
+  { action: "ban", team: "radiant" },
+  { action: "ban", team: "dire" },
+  { action: "pick", team: "dire" },
+  { action: "pick", team: "radiant" }
 ];
 
 export const CM_STEP_COUNT = CM_STEPS.length;

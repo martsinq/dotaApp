@@ -758,11 +758,6 @@ export function pickDireHeroWithIntel(
   baseWinRate: Record<string, number>,
   heroByName: Record<string, OpenDotaHeroStats>
 ): string {
-  const st: HeroStats = { baseWinRate, counterVs: {} };
-  for (const rn of radiantPicks.filter(Boolean)) {
-    if (vsRadiant[rn]) st.counterVs[rn] = vsRadiant[rn];
-  }
-
   const allies = direPicks.filter(Boolean);
   const enemies = radiantPicks.filter(Boolean);
 
@@ -773,14 +768,22 @@ export function pickDireHeroWithIntel(
   }
   if (pool.length === 0) pool = available;
 
-  const synW = allies.length > 0 ? 0.42 : 0;
+  const synW = allies.length > 0 ? 0.44 : 0;
 
-  const scored = pool.map((hero) => ({
-    hero,
-    score:
-      calculateScore(hero, slotIndex, enemies, st, heroByName) -
-      synW * synergyPenaltyVsAllies(hero, allies, vsDireOwn)
-  }));
+  const scored = pool.map((hero) => {
+    let counterPressure = 0;
+    for (const e of enemies) {
+      counterPressure += vsRadiant[e]?.[hero] ?? 0;
+    }
+    const role = calculateRoleFit(hero, slotIndex, heroByName);
+    const meta = (baseWinRate[hero] ?? 50) - 50;
+    const score =
+      counterPressure * 5.35 +
+      role * 1.22 +
+      meta * 0.18 -
+      synW * synergyPenaltyVsAllies(hero, allies, vsDireOwn);
+    return { hero, score };
+  });
   scored.sort((a, b) => b.score - a.score);
 
   const top = scored.slice(0, Math.min(10, scored.length));
@@ -802,11 +805,6 @@ export function pickRadiantHeroWithIntel(
   baseWinRate: Record<string, number>,
   heroByName: Record<string, OpenDotaHeroStats>
 ): string {
-  const st: HeroStats = { baseWinRate, counterVs: {} };
-  for (const dn of direPicks.filter(Boolean)) {
-    if (vsDire[dn]) st.counterVs[dn] = vsDire[dn];
-  }
-
   const allies = radiantPicks.filter(Boolean);
   const enemies = direPicks.filter(Boolean);
 
@@ -817,14 +815,22 @@ export function pickRadiantHeroWithIntel(
   }
   if (pool.length === 0) pool = available;
 
-  const synW = allies.length > 0 ? 0.42 : 0;
+  const synW = allies.length > 0 ? 0.44 : 0;
 
-  const scored = pool.map((hero) => ({
-    hero,
-    score:
-      calculateScore(hero, slotIndex, enemies, st, heroByName) -
-      synW * synergyPenaltyVsAllies(hero, allies, vsRadiant)
-  }));
+  const scored = pool.map((hero) => {
+    let counterPressure = 0;
+    for (const e of enemies) {
+      counterPressure += vsDire[e]?.[hero] ?? 0;
+    }
+    const role = calculateRoleFit(hero, slotIndex, heroByName);
+    const meta = (baseWinRate[hero] ?? 50) - 50;
+    const score =
+      counterPressure * 5.35 +
+      role * 1.22 +
+      meta * 0.18 -
+      synW * synergyPenaltyVsAllies(hero, allies, vsRadiant);
+    return { hero, score };
+  });
   scored.sort((a, b) => b.score - a.score);
 
   const top = scored.slice(0, Math.min(10, scored.length));

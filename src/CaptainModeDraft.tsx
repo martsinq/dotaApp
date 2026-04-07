@@ -8,8 +8,12 @@ import {
   type CaptainStep
 } from "./captainModeConfig";
 import {
-  pickBotCmHeroAndSlot,
+  buildCounterTablesFromHeroes,
   pickCmBotBan,
+  pickDireBanWithIntel,
+  pickDireHeroWithIntel,
+  pickRadiantBanWithIntel,
+  pickRadiantHeroWithIntel,
   type CmBanIntelLevel,
   type TeamKey
 } from "./draftCmScoring";
@@ -74,6 +78,10 @@ function emptySlotIndices(slots: string[]): number[] {
   return out;
 }
 
+function toPct(v: number): number {
+  return Math.max(1, Math.min(99, v));
+}
+
 /** Герой на шаге i: баны и пики в порядке CM, слоты radiant/dire могут заполняться не по индексу. */
 function heroForPastStep(
   i: number,
@@ -99,6 +107,7 @@ function heroForPastStep(
 
 export function CaptainModeDraft() {
   const [userTeam, setUserTeam] = useState<TeamKey>("radiant");
+  const [manualBothTeams, setManualBothTeams] = useState(false);
   const [orderSwapped, setOrderSwapped] = useState(false);
 
   const steps = useMemo(
@@ -200,7 +209,7 @@ export function CaptainModeDraft() {
 
   const currentTurn = stepIndex < steps.length ? steps[stepIndex]! : null;
   const isComplete = stepIndex >= steps.length;
-  const isUserTurn = Boolean(currentTurn?.team === userTeam && !isComplete);
+  const isUserTurn = Boolean(!isComplete && (manualBothTeams || currentTurn?.team === userTeam));
 
   const resetDraft = useCallback(() => {
     setStepIndex(0);
@@ -215,7 +224,8 @@ export function CaptainModeDraft() {
 
   const applyUserChoice = useCallback(
     (hero: string) => {
-      if (!currentTurn || currentTurn.team !== userTeam || used.has(hero)) return;
+      if (!currentTurn || used.has(hero)) return;
+      if (!manualBothTeams && currentTurn.team !== userTeam) return;
 
       if (currentTurn.action === "ban") {
         setBans((b) => [...b, hero]);
@@ -240,7 +250,7 @@ export function CaptainModeDraft() {
       }
       setStepIndex((i) => i + 1);
     },
-    [currentTurn, userTeam, radiant, dire, used]
+    [currentTurn, userTeam, manualBothTeams, radiant, dire, used]
   );
 
   /** Ход бота: один таймер на конкретный stepIndex; состояние читаем из latestRef в момент срабатывания. */
@@ -249,12 +259,12 @@ export function CaptainModeDraft() {
     if (stepIndex >= steps.length) return;
 
     const turn = steps[stepIndex];
-    if (!turn || turn.team === userTeam) return;
+    if (!turn || turn.team === userTeam || manualBothTeams) return;
 
     const lockedStep = stepIndex;
     setBotThinking(true);
     const delay = 550 + Math.random() * 650;
-    const timer = window.setTimeout(() => {
+    const timer = window.setTimeout(async () => {
       try {
         const snap = latestRef.current;
         if (snap.stepIndex !== lockedStep) return;
@@ -276,14 +286,77 @@ export function CaptainModeDraft() {
           let banIntel: CmBanIntelLevel = "normal";
           if (snap.stepIndex >= CM_LAST_TWO_BANS_FIRST_INDEX) banIntel = "last2";
           else if (snap.stepIndex >= CM_FINAL_BAN_PHASE_FIRST_INDEX) banIntel = "final";
-          const hero = pickCmBotBan(available, wr, by, enemySlots, banIntel);
+          const finalPhase = banIntel === "final" || banIntel === "last2";
+
+          const radiantPicks = r.filter(Boolean);
+          const direPicks = d.filter(Boolean);
+          const botPicks = t.team === "radiant" ? radiantPicks : direPicks;
+
+          // Баним прежде всего тех, кто хорошо играет ПРОТИВ уже взятых героев бота.
+          const vsBotOwn = botPicks.length > 0 ? await buildCounterTablesFromHeroes(botPicks, by) : {};
+          const vsEnemy = await buildCounterTablesFromHeroes(
+            t.team === "radiant" ? direPicks : radiantPicks,
+            by
+          );
+
+          let hero = "";
+          if (t.team === "dire") {
+            hero = pickDireBanWithIntel(
+              available,
+              radiantPicks,
+              direPicks,
+              vsEnemy,
+              vsBotOwn,
+              wr,
+              by,
+              r,
+              finalPhase
+            );
+          } else {
+            hero = pickRadiantBanWithIntel(
+              available,
+              radiantPicks,
+              direPicks,
+              vsBotOwn,
+              vsEnemy,
+              wr,
+              by,
+              d,
+              finalPhase
+            );
+          }
+          if (!hero) {
+            hero = pickCmBotBan(available, wr, by, enemySlots, banIntel);
+          }
           setBans((prev) => [...prev, hero]);
         } else if (t.team === "dire") {
           const empties = emptySlotIndices(d);
           if (empties.length === 0) return;
-          const pick = pickBotCmHeroAndSlot(available, empties, r, wr, by);
-          if (!pick?.hero) return;
-          const { hero, slotIndex } = pick;
+          const radiantPicks = r.filter(Boolean);
+          const direPicks = d.filter(Boolean);
+          const vsRadiant = await buildCounterTablesFromHeroes(radiantPicks, by);
+          const vsDireOwn = direPicks.length > 0 ? await buildCounterTablesFromHeroes(direPicks, by) : {};
+          let best: { hero: string; slotIndex: number; score: number } | null = null;
+          for (const slotIndex of empties) {
+            const hero = pickDireHeroWithIntel(
+              available,
+              slotIndex,
+              radiantPicks,
+              direPicks,
+              vsRadiant,
+              vsDireOwn,
+              wr,
+              by
+            );
+            if (!hero) continue;
+            let counter = 0;
+            for (const e of radiantPicks) counter += vsRadiant[e]?.[hero] ?? 0;
+            const meta = (wr[hero] ?? 50) - 50;
+            const score = counter * 6.8 + meta * 0.12 + Math.random() * 0.35;
+            if (!best || score > best.score) best = { hero, slotIndex, score };
+          }
+          if (!best?.hero) return;
+          const { hero, slotIndex } = best;
           setDire((prev) => {
             const next = [...prev];
             if (!next[slotIndex]) {
@@ -299,9 +372,32 @@ export function CaptainModeDraft() {
         } else {
           const empties = emptySlotIndices(r);
           if (empties.length === 0) return;
-          const pick = pickBotCmHeroAndSlot(available, empties, d, wr, by);
-          if (!pick?.hero) return;
-          const { hero, slotIndex } = pick;
+          const radiantPicks = r.filter(Boolean);
+          const direPicks = d.filter(Boolean);
+          const vsDire = await buildCounterTablesFromHeroes(direPicks, by);
+          const vsRadiantOwn =
+            radiantPicks.length > 0 ? await buildCounterTablesFromHeroes(radiantPicks, by) : {};
+          let best: { hero: string; slotIndex: number; score: number } | null = null;
+          for (const slotIndex of empties) {
+            const hero = pickRadiantHeroWithIntel(
+              available,
+              slotIndex,
+              radiantPicks,
+              direPicks,
+              vsRadiantOwn,
+              vsDire,
+              wr,
+              by
+            );
+            if (!hero) continue;
+            let counter = 0;
+            for (const e of direPicks) counter += vsDire[e]?.[hero] ?? 0;
+            const meta = (wr[hero] ?? 50) - 50;
+            const score = counter * 6.8 + meta * 0.12 + Math.random() * 0.35;
+            if (!best || score > best.score) best = { hero, slotIndex, score };
+          }
+          if (!best?.hero) return;
+          const { hero, slotIndex } = best;
           setRadiant((prev) => {
             const next = [...prev];
             if (!next[slotIndex]) {
@@ -328,7 +424,7 @@ export function CaptainModeDraft() {
       window.clearTimeout(timer);
       setBotThinking(false);
     };
-  }, [stepIndex, userTeam, isLoadingData, heroes.length, steps]);
+  }, [stepIndex, userTeam, manualBothTeams, isLoadingData, heroes.length, steps]);
 
   const filteredHeroes = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -338,37 +434,52 @@ export function CaptainModeDraft() {
 
   const turnLabel = useMemo(() => {
     if (!currentTurn) return isComplete ? "Драфт завершён" : "";
+    if (manualBothTeams) {
+      const side = currentTurn.team === "radiant" ? "Radiant" : "Dire";
+      const act = currentTurn.action === "ban" ? "Бан" : "Пик";
+      return `${act} — ${side}`;
+    }
     const you = userTeam === "radiant" ? "Radiant" : "Dire";
     const them = userTeam === "radiant" ? "Dire" : "Radiant";
     const side = currentTurn.team === userTeam ? `${you} (вы)` : `${them} (бот)`;
     const act = currentTurn.action === "ban" ? "Бан" : "Пик";
     return `${act} — ${side}`;
-  }, [currentTurn, isComplete, userTeam]);
+  }, [currentTurn, isComplete, userTeam, manualBothTeams]);
 
   const progressCurrent = isComplete ? steps.length : stepIndex + 1;
 
   const botLabel = userTeam === "radiant" ? "Dire (бот)" : "Radiant (бот)";
+  const draftWinOdds = useMemo(() => {
+    const r = radiant.filter(Boolean);
+    const d = dire.filter(Boolean);
+    if (!isComplete || r.length !== 5 || d.length !== 5) return null;
+
+    const radiantWr = r.reduce((acc, h) => acc + (baseWinRate[h] ?? 50), 0) / r.length;
+    const direWr = d.reduce((acc, h) => acc + (baseWinRate[h] ?? 50), 0) / d.length;
+    const diff = radiantWr - direWr;
+
+    // Sigmoid: разница среднего WR команд -> вероятность победы Radiant.
+    const radiantP = 1 / (1 + Math.exp(-diff / 4.8));
+    const radiantPct = toPct(radiantP * 100);
+    const direPct = toPct(100 - radiantPct);
+    return { radiantPct, direPct };
+  }, [isComplete, radiant, dire, baseWinRate]);
 
   return (
     <>
       <h1>Captain&apos;s Mode vs бот</h1>
-      <p className="subtitle">
-        Лента ходов как в Captain&apos;s Mode (патч 7.40): баны и пики по центру, слот активной стороны слева
-        или справа. Выберите сторону за себя и при необходимости поменяйте очередь (зеркально R/D во всех
-        фазах).
-      </p>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="cm-toolbar">
         <div className="cm-options">
           <div className="cm-option-row">
-            <span className="cm-option-label">Ваша сторона</span>
+            <span className="cm-option-label">Сторона игрока</span>
             <div className="cm-option-buttons">
               <button
                 type="button"
                 className={userTeam === "radiant" ? "secondary active-radiant" : "secondary"}
                 onClick={() => setUserTeam("radiant")}
-                disabled={isLoadingData}
+                disabled={isLoadingData || manualBothTeams}
               >
                 Radiant
               </button>
@@ -376,13 +487,35 @@ export function CaptainModeDraft() {
                 type="button"
                 className={userTeam === "dire" ? "secondary active-dire" : "secondary"}
                 onClick={() => setUserTeam("dire")}
-                disabled={isLoadingData}
+                disabled={isLoadingData || manualBothTeams}
               >
                 Dire
               </button>
             </div>
           </div>
           <div className="cm-option-row">
+            <span className="cm-option-label">Режим драфта</span>
+            <div className="cm-option-buttons">
+              <button
+                type="button"
+                className={!manualBothTeams ? "secondary active-radiant" : "secondary"}
+                onClick={() => setManualBothTeams(false)}
+                disabled={isLoadingData}
+              >
+                vs бот
+              </button>
+              <button
+                type="button"
+                className={manualBothTeams ? "secondary active-dire" : "secondary"}
+                onClick={() => setManualBothTeams(true)}
+                disabled={isLoadingData}
+              >
+                Ручной (2 команды)
+              </button>
+            </div>
+          </div>
+          <div className="cm-option-row">
+            <span className="cm-option-label">Порядок ходов</span>
             <div className="cm-option-buttons">
               <button
                 type="button"
@@ -394,6 +527,9 @@ export function CaptainModeDraft() {
               </button>
             </div>
           </div>
+          {manualBothTeams && (
+            <p className="cm-mode-note">Вы выбираете героев за Radiant и Dire по очереди.</p>
+          )}
         </div>
         <button type="button" className="secondary" onClick={resetDraft} disabled={isLoadingData}>
           Новый драфт
@@ -412,9 +548,19 @@ export function CaptainModeDraft() {
               Ход {progressCurrent} / {steps.length}
               {isComplete && " — готово"}
             </p>
-            <p className="muted" style={{ marginTop: 6, fontSize: 13 }}>
-              Противник: <strong>{botLabel}</strong>
-            </p>
+            {!manualBothTeams && (
+              <p className="muted" style={{ marginTop: 6, fontSize: 13 }}>
+                Противник: <strong>{botLabel}</strong>
+              </p>
+            )}
+            {draftWinOdds && (
+              <p className="cm-win-odds">
+                Вероятность победы:{" "}
+                <strong className="cm-win-odds-radiant">Radiant {draftWinOdds.radiantPct.toFixed(1)}%</strong>
+                {" / "}
+                <strong className="cm-win-odds-dire">Dire {draftWinOdds.direPct.toFixed(1)}%</strong>
+              </p>
+            )}
           </>
         )}
       </section>
@@ -425,7 +571,7 @@ export function CaptainModeDraft() {
             <div className="cm-board-header">
               <h2 className="cm-board-title cm-board-title-radiant">Radiant</h2>
               <div className="cm-board-header-mid" aria-hidden="true">
-                <span className="muted" style={{ fontSize: 11, fontWeight: 800 }}>
+                <span className="muted cm-board-vs">
                   VS
                 </span>
               </div>
@@ -456,7 +602,9 @@ export function CaptainModeDraft() {
                       <span className="cm-slot-label">{heroName}</span>
                     </>
                   ) : isFuture ? (
-                    <span className="cm-slot-placeholder">…</span>
+                    <span className="cm-slot-placeholder">
+                      {step.action === "ban" ? "Бан" : "Пик"}
+                    </span>
                   ) : (
                     <span className="cm-slot-placeholder">
                       {step.action === "ban" ? "Бан" : "Пик"}
@@ -550,10 +698,14 @@ export function CaptainModeDraft() {
               {isUserTurn
                 ? currentTurn?.action === "ban"
                   ? "Нажмите на героя, чтобы забанить."
-                  : "Нажмите на героя, чтобы запикать на следующую свободную позицию вашей стороны."
+                  : manualBothTeams
+                    ? "Нажмите на героя, чтобы запикать на следующую свободную позицию активной стороны."
+                    : "Нажмите на героя, чтобы запикать на следующую свободную позицию вашей стороны."
                 : isComplete
                   ? "Драфт окончен. Можно начать заново."
-                  : "Ожидайте ход бота."}
+                  : manualBothTeams
+                    ? "Ожидается ход текущей стороны."
+                    : "Ожидайте ход бота."}
             </p>
           </section>
         </div>
