@@ -1,0 +1,25 @@
+# зависимости и сборка — в образе ставятся заново / пересобираются
+node_modules
+dist
+*.tsbuildinfo
+
+# git и редактор
+.git
+.gitignore
+.cursor
+.vscode
+
+# документация в контекст сборки не нужна
+*.md
+
+# секреты не попадают в образ; пример окружения — исключение (см. ! ниже)
+.env
+.env.*
+!.env.example
+
+# прочее
+*.log
+npm-debug.log*
+coverage
+.DS_Store
+Thumbs.db
