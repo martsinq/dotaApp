@@ -105,6 +105,16 @@ function heroForPastStep(
   return direPickLog[di] ?? null;
 }
 
+function openHeroProfileByName(
+  heroName: string,
+  heroByName: Record<string, OpenDotaHeroStats>
+): void {
+  const hero = heroByName[heroName];
+  if (!hero) return;
+  window.history.pushState(null, "", `${window.location.origin}/profiles?heroId=${hero.id}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 export function CaptainModeDraft() {
   const [userTeam, setUserTeam] = useState<TeamKey>("radiant");
   const [manualBothTeams, setManualBothTeams] = useState(false);
@@ -592,7 +602,15 @@ export function CaptainModeDraft() {
 
                 const slotInner =
                   heroName != null && heroName !== "" ? (
-                    <>
+                    <button
+                      type="button"
+                      className="cm-profile-link"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openHeroProfileByName(heroName, heroByName);
+                      }}
+                      title={`Открыть профиль: ${heroName}`}
+                    >
                       <HeroAssetImage
                         hero={heroByName[heroName]}
                         type="icon"
@@ -600,7 +618,7 @@ export function CaptainModeDraft() {
                         alt=""
                       />
                       <span className="cm-slot-label">{heroName}</span>
-                    </>
+                    </button>
                   ) : isFuture ? (
                     <span className="cm-slot-placeholder">
                       {step.action === "ban" ? "Бан" : "Пик"}

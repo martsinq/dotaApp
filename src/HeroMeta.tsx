@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  fetchHeroAvgCoreStatsCached,
   fetchHeroAvgKdaCached,
   fetchHeroStatsCached,
   pubWinRatePercent,
@@ -17,6 +18,11 @@ type HeroMetaRow = {
   avgKills: number | null;
   avgDeaths: number | null;
   avgAssists: number | null;
+  avgHeroDamage: number | null;
+  avgHeroHealing: number | null;
+  avgGpm: number | null;
+  avgXpm: number | null;
+  avgTowerDamage: number | null;
 };
 
 type SortKey =
@@ -27,11 +33,38 @@ type SortKey =
   | "avgKills"
   | "avgDeaths"
   | "avgAssists"
+  | "avgHeroDamage"
+  | "avgHeroHealing"
+  | "avgGpm"
+  | "avgXpm"
+  | "avgTowerDamage"
   | "kdaRatio";
 type SortDir = "asc" | "desc";
 type BracketFilter = "all" | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 type RoleFilterKey = "Carry" | "Mid" | "Offlane" | "Soft support" | "Hard support";
+type OptionalMetricKey =
+  | "avgKills"
+  | "avgDeaths"
+  | "avgAssists"
+  | "kdaRatio"
+  | "avgHeroDamage"
+  | "avgHeroHealing"
+  | "avgGpm"
+  | "avgXpm"
+  | "avgTowerDamage";
+
+const OPTIONAL_METRICS: Array<{ key: OptionalMetricKey; label: string }> = [
+  { key: "avgKills", label: "K" },
+  { key: "avgDeaths", label: "D" },
+  { key: "avgAssists", label: "A" },
+  { key: "kdaRatio", label: "KDA" },
+  { key: "avgHeroDamage", label: "Avg dmg" },
+  { key: "avgHeroHealing", label: "Avg heal" },
+  { key: "avgGpm", label: "GPM" },
+  { key: "avgXpm", label: "XPM" },
+  { key: "avgTowerDamage", label: "Tower dmg" }
+];
 
 const normalizeNames = (names: string[]): Set<string> =>
   new Set(names.map((n) => n.toLowerCase()));
@@ -248,6 +281,8 @@ export function HeroMeta() {
   const [selectedRoles, setSelectedRoles] = useState<RoleFilterKey[]>([]);
   const [selectedBracket, setSelectedBracket] = useState<BracketFilter>("all");
   const [isRoleFilterOpen, setIsRoleFilterOpen] = useState(false);
+  const [selectedMetrics, setSelectedMetrics] = useState<OptionalMetricKey[]>([]);
+  const [isMetricsMenuOpen, setIsMetricsMenuOpen] = useState(false);
   const roleFilterWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -256,15 +291,37 @@ export function HeroMeta() {
       try {
         setIsLoading(true);
         setError(null);
-        const [stats, avgKdaRows] = await Promise.all([
+        const [stats, avgKdaRows, avgCoreRows] = await Promise.all([
           fetchHeroStatsCached(),
-          fetchHeroAvgKdaCached()
+          fetchHeroAvgKdaCached(),
+          fetchHeroAvgCoreStatsCached()
         ]);
         if (cancelled) return;
         const avgKdaByHero = new Map<number, { kills: number; deaths: number; assists: number }>(
           avgKdaRows.map((row) => [
             row.hero_id,
             { kills: row.avg_kills, deaths: row.avg_deaths, assists: row.avg_assists }
+          ])
+        );
+        const avgCoreByHero = new Map<
+          number,
+          {
+            heroDamage: number;
+            heroHealing: number;
+            gpm: number;
+            xpm: number;
+            towerDamage: number;
+          }
+        >(
+          avgCoreRows.map((row) => [
+            row.hero_id,
+            {
+              heroDamage: row.avg_hero_damage,
+              heroHealing: row.avg_hero_healing,
+              gpm: row.avg_gold_per_min,
+              xpm: row.avg_xp_per_min,
+              towerDamage: row.avg_tower_damage
+            }
           ])
         );
 
@@ -296,7 +353,12 @@ export function HeroMeta() {
             proPicks: readNumericStat(h, "pro_pick"),
             avgKills: avgKdaByHero.get(h.id)?.kills ?? null,
             avgDeaths: avgKdaByHero.get(h.id)?.deaths ?? null,
-            avgAssists: avgKdaByHero.get(h.id)?.assists ?? null
+            avgAssists: avgKdaByHero.get(h.id)?.assists ?? null,
+            avgHeroDamage: avgCoreByHero.get(h.id)?.heroDamage ?? null,
+            avgHeroHealing: avgCoreByHero.get(h.id)?.heroHealing ?? null,
+            avgGpm: avgCoreByHero.get(h.id)?.gpm ?? null,
+            avgXpm: avgCoreByHero.get(h.id)?.xpm ?? null,
+            avgTowerDamage: avgCoreByHero.get(h.id)?.towerDamage ?? null
           };
         });
         setRows(next);
@@ -408,6 +470,31 @@ export function HeroMeta() {
         const bv = b.avgAssists ?? Number.NEGATIVE_INFINITY;
         return (av - bv) * dir;
       }
+      if (sortBy === "avgHeroDamage") {
+        const av = a.avgHeroDamage ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgHeroDamage ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgHeroHealing") {
+        const av = a.avgHeroHealing ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgHeroHealing ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgGpm") {
+        const av = a.avgGpm ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgGpm ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgXpm") {
+        const av = a.avgXpm ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgXpm ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
+      if (sortBy === "avgTowerDamage") {
+        const av = a.avgTowerDamage ?? Number.NEGATIVE_INFINITY;
+        const bv = b.avgTowerDamage ?? Number.NEGATIVE_INFINITY;
+        return (av - bv) * dir;
+      }
       if (sortBy === "kdaRatio") {
         const aKda =
           a.avgKills != null && a.avgAssists != null && a.avgDeaths != null && a.avgDeaths > 0
@@ -457,6 +544,7 @@ export function HeroMeta() {
       if (!wrap) return;
       if (wrap.contains(target)) return;
       setIsRoleFilterOpen(false);
+      setIsMetricsMenuOpen(false);
     };
 
     document.addEventListener("mousedown", onPointerDown);
@@ -466,6 +554,24 @@ export function HeroMeta() {
       document.removeEventListener("touchstart", onPointerDown);
     };
   }, [isRoleFilterOpen]);
+
+  useEffect(() => {
+    const isOptionalSort =
+      sortBy !== "name" && sortBy !== "winRate" && sortBy !== "pickRate" && sortBy !== "banRate";
+    if (!isOptionalSort) return;
+    if (selectedMetrics.includes(sortBy as OptionalMetricKey)) return;
+    setSortBy("winRate");
+    setSortDir("desc");
+  }, [selectedMetrics, sortBy]);
+
+  const handleMetricToggle = (metric: OptionalMetricKey) => {
+    setSelectedMetrics((prev) =>
+      prev.includes(metric) ? prev.filter((m) => m !== metric) : [...prev, metric]
+    );
+  };
+  const orderedSelectedMetrics = OPTIONAL_METRICS.filter((metric) =>
+    selectedMetrics.includes(metric.key)
+  );
 
   return (
     <div className="hero-meta-page">
@@ -506,54 +612,114 @@ export function HeroMeta() {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className={
-                selectedRoles.length > 0
-                  ? "hero-meta-filter-button hero-meta-filter-button-active"
-                  : "hero-meta-filter-button"
-              }
-              onClick={() => setIsRoleFilterOpen((prev) => !prev)}
-              disabled={isLoading}
-              aria-expanded={isRoleFilterOpen}
-            >
-              Фильтр по ролям
-              {selectedRoles.length > 0 && (
-                <span className="hero-meta-filter-counter">
-                  {selectedRoles.length}
-                </span>
-              )}
-            </button>
-            {isRoleFilterOpen && (
-              <div className="hero-meta-filter-dropdown">
-                {(
-                  ["Carry", "Mid", "Offlane", "Soft support", "Hard support"] as RoleFilterKey[]
-                ).map((role) => {
-                  const isActive = selectedRoles.includes(role);
-                  return (
-                    <label key={role} className="hero-meta-filter-dropdown-item">
-                      <input
-                        type="checkbox"
-                        checked={isActive}
-                        onChange={() => handleRoleToggle(role)}
-                        disabled={isLoading}
-                      />
-                      <span>{role}</span>
-                    </label>
-                  );
-                })}
+            <div className="hero-meta-filter-menu">
+              <button
+                type="button"
+                className={
+                  selectedRoles.length > 0
+                    ? "hero-meta-filter-button hero-meta-filter-button-active"
+                    : "hero-meta-filter-button"
+                }
+                onClick={() => {
+                  setIsMetricsMenuOpen(false);
+                  setIsRoleFilterOpen((prev) => !prev);
+                }}
+                disabled={isLoading}
+                aria-expanded={isRoleFilterOpen}
+              >
+                Фильтр по ролям
                 {selectedRoles.length > 0 && (
-                  <button
-                    type="button"
-                    className="hero-meta-filter-clear"
-                    onClick={() => setSelectedRoles([])}
-                    disabled={isLoading}
-                  >
-                    Сбросить роли
-                  </button>
+                  <span className="hero-meta-filter-counter">
+                    {selectedRoles.length}
+                  </span>
                 )}
-              </div>
-            )}
+              </button>
+              {isRoleFilterOpen && (
+                <div
+                  className="hero-meta-filter-dropdown hero-meta-filter-dropdown-roles"
+                  onMouseLeave={() => setIsRoleFilterOpen(false)}
+                >
+                  {(
+                    ["Carry", "Mid", "Offlane", "Soft support", "Hard support"] as RoleFilterKey[]
+                  ).map((role) => {
+                    const isActive = selectedRoles.includes(role);
+                    return (
+                      <label key={role} className="hero-meta-filter-dropdown-item">
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={() => handleRoleToggle(role)}
+                          disabled={isLoading}
+                        />
+                        <span>{role}</span>
+                      </label>
+                    );
+                  })}
+                  {selectedRoles.length > 0 && (
+                    <button
+                      type="button"
+                      className="hero-meta-filter-clear"
+                      onClick={() => setSelectedRoles([])}
+                      disabled={isLoading}
+                    >
+                      Сбросить роли
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="hero-meta-filter-menu">
+              <button
+                type="button"
+                className={
+                  selectedMetrics.length > 0
+                    ? "hero-meta-filter-button hero-meta-filter-button-active"
+                    : "hero-meta-filter-button"
+                }
+                onClick={() => {
+                  setIsRoleFilterOpen(false);
+                  setIsMetricsMenuOpen((prev) => !prev);
+                }}
+                disabled={isLoading}
+                aria-expanded={isMetricsMenuOpen}
+              >
+                Добавить показатели
+                {selectedMetrics.length > 0 && (
+                  <span className="hero-meta-filter-counter">{selectedMetrics.length}</span>
+                )}
+              </button>
+              {isMetricsMenuOpen && (
+                <div
+                  className="hero-meta-filter-dropdown hero-meta-filter-dropdown-metrics"
+                  onMouseLeave={() => setIsMetricsMenuOpen(false)}
+                >
+                  {OPTIONAL_METRICS.map((metric) => {
+                    const isActive = selectedMetrics.includes(metric.key);
+                    return (
+                      <label key={metric.key} className="hero-meta-filter-dropdown-item">
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={() => handleMetricToggle(metric.key)}
+                          disabled={isLoading}
+                        />
+                        <span>{metric.label}</span>
+                      </label>
+                    );
+                  })}
+                  {selectedMetrics.length > 0 && (
+                    <button
+                      type="button"
+                      className="hero-meta-filter-clear"
+                      onClick={() => setSelectedMetrics([])}
+                      disabled={isLoading}
+                    >
+                      Сбросить показатели
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -587,32 +753,19 @@ export function HeroMeta() {
                     className="hero-meta-th-sortable"
                     onClick={() => handleSort("banRate")}
                   >
-                    Ban rate {sortIndicator("banRate")}
+                    Частота бана {sortIndicator("banRate")}
                   </th>
-                  <th
-                    className="hero-meta-th-sortable"
-                    onClick={() => handleSort("avgKills")}
-                  >
-                    K {sortIndicator("avgKills")}
-                  </th>
-                  <th
-                    className="hero-meta-th-sortable"
-                    onClick={() => handleSort("avgDeaths")}
-                  >
-                    D {sortIndicator("avgDeaths")}
-                  </th>
-                  <th
-                    className="hero-meta-th-sortable"
-                    onClick={() => handleSort("avgAssists")}
-                  >
-                    A {sortIndicator("avgAssists")}
-                  </th>
-                  <th
-                    className="hero-meta-th-sortable"
-                    onClick={() => handleSort("kdaRatio")}
-                  >
-                    KDA {sortIndicator("kdaRatio")}
-                  </th>
+                  {orderedSelectedMetrics.map((metric) => {
+                    return (
+                      <th
+                        key={metric.key}
+                        className="hero-meta-th-sortable"
+                        onClick={() => handleSort(metric.key)}
+                      >
+                        {metric.label} {sortIndicator(metric.key)}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -631,17 +784,70 @@ export function HeroMeta() {
                   return (
                     <tr key={row.hero.id}>
                       <td className="hero-meta-hero">
-                        <HeroMetaHeroImage hero={row.hero} />
-                        <span>{row.hero.localized_name}</span>
+                        <button
+                          type="button"
+                          className="hero-meta-profile-link"
+                          onClick={() => {
+                            window.history.pushState(
+                              null,
+                              "",
+                              `${window.location.origin}/profiles?heroId=${row.hero.id}`
+                            );
+                            window.dispatchEvent(new PopStateEvent("popstate"));
+                          }}
+                          title={`Открыть мини-профиль: ${row.hero.localized_name}`}
+                        >
+                          <HeroMetaHeroImage hero={row.hero} />
+                          <span>{row.hero.localized_name}</span>
+                        </button>
                       </td>
                       <td>{describeHeroRole(row.hero)}</td>
                       <td>{formatPercent(row.winRate)}</td>
                       <td>{formatPercent(pickRate)}</td>
                       <td>{formatPercent(row.banRate ?? 0)}</td>
-                      <td>{row.avgKills == null ? "—" : row.avgKills.toFixed(1)}</td>
-                      <td>{row.avgDeaths == null ? "—" : row.avgDeaths.toFixed(1)}</td>
-                      <td>{row.avgAssists == null ? "—" : row.avgAssists.toFixed(1)}</td>
-                      <td>{kda == null ? "—" : kda.toFixed(2)}</td>
+                      {orderedSelectedMetrics.map((metric) => {
+                        const metricKey = metric.key;
+                        if (metricKey === "avgKills") {
+                          return <td key={metricKey}>{row.avgKills == null ? "—" : row.avgKills.toFixed(1)}</td>;
+                        }
+                        if (metricKey === "avgDeaths") {
+                          return <td key={metricKey}>{row.avgDeaths == null ? "—" : row.avgDeaths.toFixed(1)}</td>;
+                        }
+                        if (metricKey === "avgAssists") {
+                          return <td key={metricKey}>{row.avgAssists == null ? "—" : row.avgAssists.toFixed(1)}</td>;
+                        }
+                        if (metricKey === "kdaRatio") {
+                          return <td key={metricKey}>{kda == null ? "—" : kda.toFixed(2)}</td>;
+                        }
+                        if (metricKey === "avgHeroDamage") {
+                          return (
+                            <td key={metricKey}>
+                              {row.avgHeroDamage == null ? "—" : Math.round(row.avgHeroDamage)}
+                            </td>
+                          );
+                        }
+                        if (metricKey === "avgHeroHealing") {
+                          return (
+                            <td key={metricKey}>
+                              {row.avgHeroHealing == null ? "—" : Math.round(row.avgHeroHealing)}
+                            </td>
+                          );
+                        }
+                        if (metricKey === "avgGpm") {
+                          return <td key={metricKey}>{row.avgGpm == null ? "—" : row.avgGpm.toFixed(0)}</td>;
+                        }
+                        if (metricKey === "avgXpm") {
+                          return <td key={metricKey}>{row.avgXpm == null ? "—" : row.avgXpm.toFixed(0)}</td>;
+                        }
+                        if (metricKey === "avgTowerDamage") {
+                          return (
+                            <td key={metricKey}>
+                              {row.avgTowerDamage == null ? "—" : Math.round(row.avgTowerDamage)}
+                            </td>
+                          );
+                        }
+                        return <td key={metricKey}>—</td>;
+                      })}
                     </tr>
                   );
                 })}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
   pubWinRatePercent,
@@ -107,7 +108,7 @@ const POSITION_RULES: Record<number, PositionRule> = {
   }
 };
 
-const MIN_MATCHUP_GAMES = 0;
+const MIN_MATCHUP_GAMES = 10;
 
 export function Draft() {
   const [radiant, setRadiant] = useState<string[]>([...emptySlots]);
@@ -218,27 +219,7 @@ export function Draft() {
         const roleMatchedHeroes = availableHeroes.filter((hero) =>
           isHeroSuitableForPosition(hero, positionIndex, heroByName)
         );
-        const positionHardFiltered = roleMatchedHeroes.filter((hero) =>
-          passesPositionHardFilter(hero, positionIndex, heroByName)
-        );
-        const strictRoleMatchedHeroes = positionHardFiltered.filter(
-          (hero) =>
-            calculateRoleFit(hero, positionIndex, heroByName) >=
-            POSITION_RULES[positionIndex].minScore
-        );
-        const pool =
-          strictRoleMatchedHeroes.length > 0
-            ? strictRoleMatchedHeroes
-            : positionHardFiltered.length > 0
-            ? positionHardFiltered
-            : roleMatchedHeroes.length > 0
-            ? roleMatchedHeroes
-            : availableHeroes;
-
-        const finalPool =
-          positionIndex === 1
-            ? pool.filter((hero) => isMidHeroProfile(hero))
-            : pool;
+        const finalPool = roleMatchedHeroes.length > 0 ? roleMatchedHeroes : availableHeroes;
 
         const candidates = finalPool
           .map((hero) => ({
@@ -365,25 +346,32 @@ export function Draft() {
               {position.candidates.map((item) => (
                 <div key={item.hero} className="result-row">
                   <div className="result-hero">
-                    <HeroAssetImage
-                      hero={heroByName[item.hero]}
-                      type="icon"
-                      className="hero-icon result-hero-icon"
-                      alt={item.hero}
-                    />
-                    <span>
-                      {item.hero}
-                      <br />
-                      <small className="muted">
-                        {buildDetails(
-                          item.hero,
-                          suggestTeam === "radiant"
-                            ? dire.filter(Boolean)
-                            : radiant.filter(Boolean),
-                          stats
-                        )}
-                      </small>
-                    </span>
+                    <button
+                      type="button"
+                      className="draft-profile-link"
+                      onClick={() => openHeroProfileByName(item.hero, heroByName)}
+                      title={`Открыть профиль: ${item.hero}`}
+                    >
+                      <HeroAssetImage
+                        hero={heroByName[item.hero]}
+                        type="icon"
+                        className="hero-icon result-hero-icon"
+                        alt={item.hero}
+                      />
+                      <span>
+                        {item.hero}
+                        <br />
+                        <small className="muted">
+                          {buildDetails(
+                            item.hero,
+                            suggestTeam === "radiant"
+                              ? dire.filter(Boolean)
+                              : radiant.filter(Boolean),
+                            stats
+                          )}
+                        </small>
+                      </span>
+                    </button>
                   </div>
                   <span className="score">{item.score.toFixed(2)}</span>
                 </div>
@@ -411,6 +399,16 @@ type TeamCardProps = {
   disabled: boolean;
   onChange: (team: TeamKey, index: number, value: string) => void;
 };
+
+function openHeroProfileByName(
+  heroName: string,
+  heroByName: Record<string, OpenDotaHeroStats>
+): void {
+  const hero = heroByName[heroName];
+  if (!hero) return;
+  window.history.pushState(null, "", `${window.location.origin}/profiles?heroId=${hero.id}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
 function TeamCard({
   title,
@@ -591,13 +589,14 @@ function calculateScore(
   st: HeroStats,
   heroByName: Record<string, OpenDotaHeroStats>
 ): number {
-  const base = st.baseWinRate[candidate] ?? 50;
   let counter = 0;
   for (const enemy of enemies) {
     counter += st.counterVs[enemy]?.[candidate] ?? 0;
   }
   const roleFit = calculateRoleFit(candidate, positionIndex, heroByName);
-  return base + counter * 3 + roleFit * 1.5;
+  const baseDelta = (st.baseWinRate[candidate] ?? 50) - 50;
+  // Matchup is dominant, just tiny tie-breakers.
+  return counter * 100 + roleFit * 0.01 + baseDelta * 0.001;
 }
 
 function buildDetails(hero: string, enemies: string[], st: HeroStats): string {
@@ -731,7 +730,8 @@ async function buildCounterTablesFromEnemies(
     uniqueEnemies.map(async (enemyName) => {
       const enemy = heroByName[enemyName];
       if (!enemy) return { enemyName, matchups: [] as OpenDotaHeroMatchup[] };
-      const matchups = await fetchHeroMatchupsWithFallback(enemy.id);
+      const large = await fetchHeroMatchupsLargeSampleCached(enemy.id);
+      const matchups = large.length > 0 ? large : await fetchHeroMatchupsWithFallback(enemy.id);
       return { enemyName, matchups };
     })
   );
@@ -753,9 +753,11 @@ async function buildCounterTablesFromEnemies(
 
   for (const { enemyName, matchups } of matchupsByEnemy) {
     const map: Record<string, number> = {};
+    const rowsAll = matchups.filter((m) => m.games_played > 0);
+    const rowsFiltered = rowsAll.filter((m) => m.games_played >= MIN_MATCHUP_GAMES);
+    const sourceRows = rowsFiltered.length >= 5 ? rowsFiltered : rowsAll;
 
-    for (const m of matchups) {
-      if (!m.games_played || m.games_played < MIN_MATCHUP_GAMES) continue;
+    for (const m of sourceRows) {
       const enemyWr = m.wins / m.games_played;
       const advantage = (0.5 - enemyWr) * 100;
       map[String(m.hero_id)] = advantage;

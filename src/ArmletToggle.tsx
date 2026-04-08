@@ -6,9 +6,9 @@ const DEFAULT_KEYBIND = "Space";
 const START_HP = 100;
 const BEAT_INTERVAL_START = 980;
 const BEAT_INTERVAL_FLOOR = 520;
-const MISS_HP = 16;
-const DRAIN_INTERVAL_MS = 140;
-const DRAIN_HP = 4;
+const MISS_HP = 14;
+const DRAIN_INTERVAL_MS = 160;
+const DRAIN_HP = 3;
 const POST_BEAT_GRACE_MS = 380;
 const FIRST_BEAT_DELAY_MS = 1400;
 

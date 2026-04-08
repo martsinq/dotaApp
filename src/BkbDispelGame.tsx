@@ -35,8 +35,8 @@ const GHOST_DURATION_MS = 3000;
 const MAX_HP = 100;
 const MAX_DEBUFFS = 5;
 const TICK_MS = 160;
-const MAGIC_DMG_PER_TICK = 1.35;
-const PHYS_DMG_PER_TICK = 2.1;
+const MAGIC_DMG_PER_TICK = 1;
+const PHYS_DMG_PER_TICK = 1;
 const SPAWN_START_MS = 2200;
 const SPAWN_FLOOR_MS = 950;
 

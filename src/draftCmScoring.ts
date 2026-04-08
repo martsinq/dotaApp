@@ -1,4 +1,5 @@
 import {
+  fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
   type OpenDotaHeroMatchup,
   type OpenDotaHeroStats
@@ -12,7 +13,7 @@ import {
   isSoftSupportHeroProfile
 } from "./heroRoleLists";
 
-const MIN_MATCHUP_GAMES = 0;
+const MIN_MATCHUP_GAMES = 10;
 
 /**
  * Таблицы «как кандидат играет против фокус-героя» (как в Draft.tsx):
@@ -36,7 +37,8 @@ export async function buildCounterTablesFromHeroes(
     unique.map(async (name) => {
       const hero = heroByName[name];
       if (!hero) return { name, matchups: [] as OpenDotaHeroMatchup[] };
-      const matchups = await fetchHeroMatchupsWithFallback(hero.id);
+      const large = await fetchHeroMatchupsLargeSampleCached(hero.id);
+      const matchups = large.length > 0 ? large : await fetchHeroMatchupsWithFallback(hero.id);
       return { name, matchups };
     })
   );
