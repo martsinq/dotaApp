@@ -2,11 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchHeroAvgCoreStatsCached,
   fetchHeroAvgKdaCached,
+  fetchHeroItemPopularityCached,
   fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
+  fetchItemConstantsBundleCached,
+  itemImageUrlCandidates,
   pubWinRatePercent,
-  type OpenDotaHeroStats
+  type OpenDotaHeroItemPopularity,
+  type OpenDotaHeroStats,
+  type OpenDotaItemConstant
 } from "./opendota";
 import {
   CARRY_HERO_NAMES,
@@ -43,6 +48,129 @@ type RoleMatchupBuckets = Record<
   { label: string; counters: HeroMatchupView[]; strong: HeroMatchupView[] }
 >;
 
+type PopularBuildSlot = {
+  itemId: number;
+  name: string;
+  img?: string;
+  purchases: number;
+};
+
+function itemIdMapFromConstants(constants: Record<string, OpenDotaItemConstant>): Map<number, OpenDotaItemConstant> {
+  const m = new Map<number, OpenDotaItemConstant>();
+  for (const def of Object.values(constants)) {
+    if (!def.id || def.id <= 0 || m.has(def.id)) continue;
+    m.set(def.id, def);
+  }
+  return m;
+}
+
+function isRecipeConstant(def: OpenDotaItemConstant | undefined): boolean {
+  const k = def?.internalKey ?? "";
+  return k.startsWith("recipe_");
+}
+
+/** «Конечный» предмет для билда: не рецепт и не входит в состав другого предмета (dotaconstants). */
+function isTerminalInventoryStyleItem(
+  def: OpenDotaItemConstant | undefined,
+  usedAsComponent: ReadonlySet<string>
+): boolean {
+  const k = def?.internalKey;
+  if (!k || k.startsWith("recipe_")) return false;
+  return !usedAsComponent.has(k);
+}
+
+function topLateGamePopularItems(
+  pop: OpenDotaHeroItemPopularity,
+  idToDef: Map<number, OpenDotaItemConstant>,
+  limit: number,
+  usedAsComponent: ReadonlySet<string>
+): PopularBuildSlot[] {
+  const totals = new Map<number, number>();
+  const phase = pop.late_game_items ?? {};
+  for (const [idStr, raw] of Object.entries(phase)) {
+    const id = Number(idStr);
+    const c = Number(raw);
+    if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(c) || c <= 0) continue;
+    totals.set(id, (totals.get(id) ?? 0) + c);
+  }
+  return [...totals.entries()]
+    .filter(([itemId]) => {
+      const def = idToDef.get(itemId);
+      if (isRecipeConstant(def)) return false;
+      return isTerminalInventoryStyleItem(def, usedAsComponent);
+    })
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([itemId, purchases]) => {
+      const def = idToDef.get(itemId);
+      return {
+        itemId,
+        name: def?.dname ?? `Предмет #${itemId}`,
+        img: def?.img,
+        purchases
+      };
+    });
+}
+
+function PopularBuildSlotIcon({ img, alt }: { img?: string; alt: string }) {
+  const sources = useMemo(() => itemImageUrlCandidates(img), [img]);
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    setIdx(0);
+  }, [sources.length, img]);
+
+  if (sources.length === 0) {
+    return <div className="hero-profile-build-icon placeholder" aria-hidden="true" />;
+  }
+
+  return (
+    <img
+      className="hero-profile-build-icon"
+      src={sources[idx]}
+      alt={alt}
+      loading="lazy"
+      onError={() => setIdx((i) => (i + 1 < sources.length ? i + 1 : i))}
+    />
+  );
+}
+
+function PopularBuildSlotView({
+  slot,
+  rank,
+  leaderPurchases
+}: {
+  slot: PopularBuildSlot;
+  rank: number;
+  leaderPurchases: number;
+}) {
+  const purchasesLabel = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(slot.purchases);
+  const compact = formatPurchaseCountCompact(slot.purchases);
+  const safeLeader = leaderPurchases > 0 ? leaderPurchases : 1;
+  const relPct = Math.min(100, (slot.purchases / safeLeader) * 100);
+  const shareRounded = Math.round(relPct);
+  const tip = `${slot.name} — ${purchasesLabel} покупок (поздняя фаза, только конечные предметы). №${rank} по частоте.${rank > 1 ? ` ${shareRounded}% от лидера.` : ""}`;
+
+  return (
+    <div className="hero-profile-build-slot" title={tip}>
+      <span className="hero-profile-build-rank" aria-hidden>
+        {rank}
+      </span>
+      <PopularBuildSlotIcon img={slot.img} alt={slot.name} />
+      <div className="hero-profile-build-bar" aria-hidden>
+        <div className="hero-profile-build-bar-fill" style={{ width: `${relPct}%` }} />
+      </div>
+      <span className="hero-profile-build-name">{slot.name}</span>
+      <div className="hero-profile-build-meta">
+        <span className="hero-profile-build-count">{compact}</span>
+        <span className="muted hero-profile-build-share">
+          {rank === 1 ? "лидер" : `${shareRounded}% к №1`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const SHADOW_FIEND_ALIASES = new Set(["shadow fiend", "nevermore"]);
 
 function selectedHeroIdFromQuery(): number | null {
@@ -56,6 +184,19 @@ function selectedHeroIdFromQuery(): number | null {
 function formatInt(v: number | null): string {
   if (v == null) return "—";
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(v);
+}
+
+function formatPurchaseCountCompact(n: number): string {
+  if (n >= 1_000_000) {
+    const x = n / 1_000_000;
+    return `${x >= 10 ? Math.round(x) : x.toFixed(1).replace(".", ",")} млн`;
+  }
+  if (n >= 10_000) return `${Math.round(n / 1_000)}\u00A0тыс.`;
+  if (n >= 1_000) {
+    const x = n / 1_000;
+    return `${x >= 10 ? Math.round(x) : x.toFixed(1).replace(".", ",")}\u00A0тыс.`;
+  }
+  return new Intl.NumberFormat("ru-RU").format(n);
 }
 
 function heroIconForList(hero: OpenDotaHeroStats | undefined): string | null {
@@ -99,10 +240,12 @@ export function MiniHeroProfiles() {
   const [bestAgainst, setBestAgainst] = useState<HeroMatchupView[]>([]);
   const [bestCounters, setBestCounters] = useState<HeroMatchupView[]>([]);
   const [roleBuckets, setRoleBuckets] = useState<RoleMatchupBuckets | null>(null);
+  const [popularBuild, setPopularBuild] = useState<PopularBuildSlot[]>([]);
 
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isLoadingMatchups, setIsLoadingMatchups] = useState(false);
+  const [isLoadingPopularBuild, setIsLoadingPopularBuild] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -145,8 +288,10 @@ export function MiniHeroProfiles() {
       setBestAgainst([]);
       setBestCounters([]);
       setRoleBuckets(null);
+      setPopularBuild([]);
       setIsLoadingProfile(false);
       setIsLoadingMatchups(false);
+      setIsLoadingPopularBuild(false);
       return;
     }
 
@@ -210,6 +355,29 @@ export function MiniHeroProfiles() {
         });
 
         setIsLoadingMatchups(true);
+        setIsLoadingPopularBuild(true);
+        setPopularBuild([]);
+
+        (async () => {
+          try {
+            const [pop, bundle] = await Promise.all([
+              fetchHeroItemPopularityCached(selectedHero.id),
+              fetchItemConstantsBundleCached()
+            ]);
+            if (cancelled) return;
+            if (!pop) {
+              setPopularBuild([]);
+            } else {
+              const idMap = itemIdMapFromConstants(bundle.constants);
+              setPopularBuild(topLateGamePopularItems(pop, idMap, 6, bundle.usedAsComponentKeys));
+            }
+          } catch {
+            if (!cancelled) setPopularBuild([]);
+          } finally {
+            if (!cancelled) setIsLoadingPopularBuild(false);
+          }
+        })();
+
         (async () => {
           const largeMatchups = await fetchHeroMatchupsLargeSampleCached(selectedHero.id);
           const fallbackMatchups =
@@ -412,6 +580,33 @@ export function MiniHeroProfiles() {
               </span>
             </div>
           </div>
+
+          <section className="hero-profile-popular-build">
+            <h3>Популярный лейт-билд</h3>
+            <p className="muted hero-profile-build-note">
+              Частота покупок в поздней фазе (OpenDota, <code>late_game_items</code>). В списке только конечные
+              предметы: те, что в dotaconstants не входят в рецепт другого предмета (как
+              слоты инвентаря после сборки: без орбов, орлов, Sange/Basher до Abyssal и т.п.). Данные API — именно
+              покупки по времени, не снимок инвентаря; отбор по рецептам лишь приближает к финальному билду. Полоска и
+              «% к №1» — относительно лидера в этом списке.
+            </p>
+            {isLoadingPopularBuild ? (
+              <p className="muted">Загрузка билда...</p>
+            ) : popularBuild.length === 0 ? (
+              <p className="muted">Нет данных по предметам.</p>
+            ) : (
+              <div className="hero-profile-build-grid">
+                {popularBuild.map((slot, i) => (
+                  <PopularBuildSlotView
+                    key={slot.itemId}
+                    slot={slot}
+                    rank={i + 1}
+                    leaderPurchases={popularBuild[0]?.purchases ?? 1}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
 
           <div className="hero-profile-matchups-grid">
             <div className="hero-profile-matchup-card">

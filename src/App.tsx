@@ -5,9 +5,10 @@ import { InvokerTrainer } from "./InvokerTrainer";
 import { ArmletToggle } from "./ArmletToggle";
 import { BkbDispelGame } from "./BkbDispelGame";
 import { HeroMeta } from "./HeroMeta";
+import { ItemMeta } from "./ItemMeta";
 import { MiniHeroProfiles } from "./MiniHeroProfiles";
 
-type AppMode = "draft" | "cm" | "invoker" | "armlet" | "dispel" | "meta" | "profiles";
+type AppMode = "draft" | "cm" | "invoker" | "armlet" | "dispel" | "meta" | "items" | "profiles";
 
 function App() {
   const [mode, setMode] = useState<AppMode>("draft");
@@ -23,6 +24,8 @@ function App() {
         setMode("dispel");
       } else if (path.endsWith("/meta")) {
         setMode("meta");
+      } else if (path.endsWith("/items")) {
+        setMode("items");
       } else if (path.endsWith("/profiles")) {
         setMode("profiles");
       } else if (path.endsWith("/cm")) {
@@ -49,6 +52,8 @@ function App() {
       nextPath = "/dispel";
     } else if (nextMode === "meta") {
       nextPath = "/meta";
+    } else if (nextMode === "items") {
+      nextPath = "/items";
     } else if (nextMode === "profiles") {
       nextPath = "/profiles";
     } else if (nextMode === "cm") {
@@ -59,10 +64,7 @@ function App() {
     }
   };
 
-  // Layout rule of thumb: new pages should be "wide" by default (container-cm).
-  // Add page-specific layout modifiers (like container-meta) only when needed.
-  const containerClass =
-    mode === "meta" ? "container container-cm container-meta" : "container container-cm";
+  const containerClass = "container container-cm";
 
   return (
     <div className={containerClass}>
@@ -80,16 +82,22 @@ function App() {
           Драфт vs бота
         </button>
         <button
+          className={mode === "profiles" ? "top-nav-btn active" : "top-nav-btn"}
+          onClick={() => navigate("profiles")}
+        >
+          Герои
+        </button>
+        <button
           className={mode === "meta" ? "top-nav-btn active" : "top-nav-btn"}
           onClick={() => navigate("meta")}
         >
           Мета
         </button>
         <button
-          className={mode === "profiles" ? "top-nav-btn active" : "top-nav-btn"}
-          onClick={() => navigate("profiles")}
+          className={mode === "items" ? "top-nav-btn active" : "top-nav-btn"}
+          onClick={() => navigate("items")}
         >
-          Герои
+          Предметы
         </button>
         <div className="top-nav-dropdown">
           <button
@@ -104,10 +112,10 @@ function App() {
           </button>
           <div className="top-nav-dropdown-menu">
             <button className="top-nav-dropdown-item" onClick={() => navigate("invoker")}>
-              Invoker trainer
+              Invoker Trainer
             </button>
             <button className="top-nav-dropdown-item" onClick={() => navigate("armlet")}>
-              Armlet togle
+              Armlet Toggle
             </button>
             <button className="top-nav-dropdown-item" onClick={() => navigate("dispel")}>
               Dispell
@@ -122,6 +130,7 @@ function App() {
       {mode === "armlet" && <ArmletToggle />}
       {mode === "dispel" && <BkbDispelGame />}
       {mode === "meta" && <HeroMeta />}
+      {mode === "items" && <ItemMeta />}
       {mode === "profiles" && <MiniHeroProfiles />}
     </div>
   );

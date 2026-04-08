@@ -577,9 +577,6 @@ export function HeroMeta() {
     <div className="hero-meta-page">
       <div className="card hero-meta-content">
         <h1>Мета героев</h1>
-        <p className="subtitle">
-          Винрейт и популярность героев по данным OpenDota heroStats, включая разрез по MMR.
-        </p>
         {error && <div className="error-banner">{error}</div>}
 
         <div className="toolbar hero-meta-toolbar">

@@ -312,7 +312,7 @@ export function BkbDispelGame() {
 
   return (
     <div className="dispel-page">
-      <h1>BKB и диспелы</h1>
+      <h1>Dispell</h1>
       <p className="subtitle">
         На тебя вешаются <strong>магические</strong> и <strong>физические</strong> дебаффы. Пока они висят,
         ты получаешь урон. <strong>Black King Bar</strong> (15 с КД, 5 с эффекта): неуязвимость к магии —

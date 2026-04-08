@@ -8,6 +8,11 @@
   --border: #30363d;
 }
 
+/* Резерв под вертикальный скролл: иначе длинные страницы (мета) на ~15px уже коротких — из‑за полосы прокрутки. */
+html {
+  scrollbar-gutter: stable;
+}
+
 * {
   box-sizing: border-box;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -23,6 +28,7 @@ body {
 }
 
 .container {
+  width: 100%;
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -31,10 +37,9 @@ body {
   max-width: 1320px;
 }
 
-.container-meta {
-  min-height: calc(100vh - 48px);
-  display: flex;
-  flex-direction: column;
+.container.container-cm {
+  width: 100%;
+  max-width: 1320px;
 }
 
 .top-nav {
@@ -1196,6 +1201,133 @@ button:disabled {
   font-weight: 700;
 }
 
+.hero-profile-popular-build {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0f141b;
+  padding: 12px;
+  margin-top: 4px;
+}
+
+.hero-profile-popular-build h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.hero-profile-build-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hero-profile-build-note code {
+  font-size: 11px;
+}
+
+.hero-profile-build-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.hero-profile-build-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  border: 1px solid rgba(48, 54, 61, 0.95);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #141c28 0%, #111821 100%);
+  padding: 10px 6px 8px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.hero-profile-build-rank {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #e8eef5;
+  background: rgba(30, 58, 95, 0.95);
+  border: 1px solid rgba(100, 140, 180, 0.45);
+  line-height: 1;
+}
+
+.hero-profile-build-bar {
+  width: 100%;
+  max-width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.hero-profile-build-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #3d7ab8, #5a9fd4);
+  min-width: 2px;
+  transition: width 0.25s ease;
+}
+
+.hero-profile-build-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: contain;
+  border: 1px solid rgba(80, 90, 102, 0.85);
+  background: radial-gradient(circle at 30% 25%, #1a2434 0%, #0f141b 70%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.hero-profile-build-icon.placeholder {
+  background: linear-gradient(135deg, #1a2230, #0b1220);
+}
+
+.hero-profile-build-name {
+  font-size: 10px;
+  line-height: 1.2;
+  color: #d7dfe8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  width: 100%;
+}
+
+.hero-profile-build-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  align-items: center;
+}
+
+.hero-profile-build-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #c9d3df;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-profile-build-share {
+  font-size: 10px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
 .hero-profile-matchups-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1281,9 +1413,11 @@ button:disabled {
 /* Hero Meta */
 .hero-meta-page {
   margin-top: 4px;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   display: flex;
-  flex: 1;
+  flex-direction: column;
 }
 
 .hero-meta-content {
@@ -1540,6 +1674,103 @@ button:disabled {
   margin-top: 10px;
 }
 
+/* Item meta (OpenDota scenarios) */
+.item-meta-page {
+  margin-top: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.item-meta-content {
+  padding-top: 14px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.item-meta-disclaimer {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.item-meta-disclaimer code {
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+}
+
+.item-meta-toolbar {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.item-meta-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.item-meta-table-wrap {
+  max-height: 652px;
+}
+
+.item-meta-icon {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(15, 20, 27, 0.9);
+}
+
+.item-meta-hero-cell {
+  gap: 10px;
+}
+
+/* Равномерная сетка: фиксированный layout + одинаковые отступы и ширина метрик */
+.item-meta-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.item-meta-table th,
+.item-meta-table td {
+  padding-left: 12px;
+  padding-right: 12px;
+  box-sizing: border-box;
+}
+
+.item-meta-table th:nth-child(1),
+.item-meta-table td:nth-child(1) {
+  width: 34%;
+  word-break: break-word;
+}
+
+.item-meta-table th:nth-child(2),
+.item-meta-table td:nth-child(2),
+.item-meta-table th:nth-child(3),
+.item-meta-table td:nth-child(3),
+.item-meta-table th:nth-child(4),
+.item-meta-table td:nth-child(4) {
+  width: 22%;
+}
+
+.item-meta-table th:nth-child(n + 2),
+.item-meta-table td:nth-child(n + 2) {
+  text-align: center;
+}
+
+.item-meta-table th:first-child,
+.item-meta-table td:first-child {
+  text-align: left;
+}
+
 @media (max-width: 900px) {
   .hero-profile-header {
     grid-template-columns: 1fr;
@@ -1558,7 +1789,20 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .hero-profile-build-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .hero-profile-build-slot {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
   .hero-meta-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .item-meta-toolbar {
     flex-wrap: wrap;
   }
 }
