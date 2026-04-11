@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  fetchHeroMatchupsCached,
   fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
+  peekCachedMatchupsLargeAnyAge,
+  prefetchHeroMatchupsLargeSample,
   type OpenDotaHeroMatchup,
   type OpenDotaHeroStats
 } from "./opendota";
@@ -177,12 +180,41 @@ function tryBuildRoundFromMatchups(
   return buildRoundFromRow(first, second, m);
 }
 
-/** Как в MiniHeroProfiles: сначала большой сэмпл explorer, иначе /heroes/{id}/matchups. */
+/**
+ * Данные как у мини-профиля, но быстрее: кэш explorer → REST (не ждём тяжёлый SQL) → large → fallback.
+ * Параллельный старт large+REST; при непустом REST сразу возврат, large догружает кэш в фоне.
+ */
 async function fetchMatchupsLikeMiniProfile(heroId: number): Promise<OpenDotaHeroMatchup[]> {
-  const largeMatchups = await fetchHeroMatchupsLargeSampleCached(heroId);
-  const fallbackMatchups =
-    largeMatchups.length > 0 ? [] : await fetchHeroMatchupsWithFallback(heroId);
-  return largeMatchups.length > 0 ? largeMatchups : fallbackMatchups;
+  const stale = peekCachedMatchupsLargeAnyAge(heroId);
+  if (stale && stale.length > 0) return stale;
+
+  const pLarge = fetchHeroMatchupsLargeSampleCached(heroId);
+  const pRest = fetchHeroMatchupsCached(heroId);
+
+  let restRows: OpenDotaHeroMatchup[] = [];
+  try {
+    restRows = await pRest;
+  } catch {
+    restRows = [];
+  }
+  if (restRows.length > 0) {
+    void pLarge.catch(() => {});
+    return restRows;
+  }
+
+  let largeRows: OpenDotaHeroMatchup[] = [];
+  try {
+    largeRows = await pLarge;
+  } catch {
+    largeRows = [];
+  }
+  if (largeRows.length > 0) return largeRows;
+
+  try {
+    return await fetchHeroMatchupsWithFallback(heroId);
+  } catch {
+    return [];
+  }
 }
 
 export function CounterpickGame() {
@@ -270,6 +302,20 @@ export function CounterpickGame() {
       cancelled = true;
     };
   }, []);
+
+  /** Прогрев больших матчапов — те же запросы, что при раунде; следующие заходы почти мгновенны из кэша. */
+  useEffect(() => {
+    if (heroList.length === 0) return;
+    const startDelayMs = 400;
+    const staggerMs = 90;
+    const batchSize = 24;
+    const t0 = window.setTimeout(() => {
+      heroList.slice(0, batchSize).forEach((h, i) => {
+        window.setTimeout(() => prefetchHeroMatchupsLargeSample(h.id), i * staggerMs);
+      });
+    }, startDelayMs);
+    return () => clearTimeout(t0);
+  }, [heroList]);
 
   useEffect(() => {
     if (heroList.length > 0 && phase === "idle" && !round && !error) {

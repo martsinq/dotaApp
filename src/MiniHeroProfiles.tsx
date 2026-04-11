@@ -1,19 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
   fetchHeroAvgCoreStatsCached,
   fetchHeroAvgKdaCached,
   fetchHeroItemPopularityCached,
   fetchHeroItemPurchaseOrderCached,
   fetchItemTimingsCached,
+  fetchHeroMatchupsCached,
   fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
   fetchItemConstantsBundleCached,
+  peekCachedMatchupsLargeAnyAge,
+  prefetchHeroMatchupsLargeSample,
   heroPortraitUrlCandidates,
   itemImageUrlCandidates,
   pubWinRatePercent,
   type OpenDotaHeroItemPopularity,
   type OpenDotaHeroItemPurchaseOrderRow,
+  type OpenDotaHeroMatchup,
   type OpenDotaHeroStats,
   type OpenDotaItemConstant
 } from "./opendota";
@@ -54,6 +58,58 @@ type RoleMatchupBuckets = Record<
   RoleKey,
   { label: string; counters: HeroMatchupView[]; strong: HeroMatchupView[] }
 >;
+
+function emptyRoleMatchupBuckets(): RoleMatchupBuckets {
+  return {
+    carry: { label: "Carry", counters: [], strong: [] },
+    mid: { label: "Mid", counters: [], strong: [] },
+    offlane: { label: "Offlane", counters: [], strong: [] },
+    softSupport: { label: "Soft support", counters: [], strong: [] },
+    hardSupport: { label: "Hard support", counters: [], strong: [] }
+  };
+}
+
+const MATCHUP_TOP_N = 5;
+
+/**
+ * WR в строке — винрейт выбранного героя против этого соперника.
+ * Контрпики: k самых низких WR. «Хорош против»: k самых высоких WR среди других героев (без пересечения, пока хватает пула).
+ */
+function pickCountersAndFavorable(rows: HeroMatchupView[], k: number): {
+  counters: HeroMatchupView[];
+  favorable: HeroMatchupView[];
+} {
+  const eligible = rows.filter((r) => r.gamesPlayed >= MIN_MATCHUP_GAMES_MINI_PROFILE);
+  if (eligible.length === 0) return { counters: [], favorable: [] };
+
+  const byWrAsc = [...eligible].sort((a, b) => {
+    const d = a.heroWinRateVs - b.heroWinRateVs;
+    if (Math.abs(d) > 0.001) return d;
+    return b.gamesPlayed - a.gamesPlayed;
+  });
+  const counters = byWrAsc.slice(0, k);
+  const counterIds = new Set(counters.map((c) => c.heroId));
+
+  const byWrDesc = [...eligible].sort((a, b) => {
+    const d = b.heroWinRateVs - a.heroWinRateVs;
+    if (Math.abs(d) > 0.001) return d;
+    return b.gamesPlayed - a.gamesPlayed;
+  });
+
+  const favorable: HeroMatchupView[] = [];
+  for (const row of byWrDesc) {
+    if (favorable.length >= k) break;
+    if (counterIds.has(row.heroId)) continue;
+    favorable.push(row);
+  }
+  for (const row of byWrDesc) {
+    if (favorable.length >= k) break;
+    if (favorable.some((f) => f.heroId === row.heroId)) continue;
+    favorable.push(row);
+  }
+
+  return { counters, favorable };
+}
 
 type PopularBuildSlot = {
   itemId: number;
@@ -435,6 +491,10 @@ export function MiniHeroProfiles() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [activeHeroId]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -460,6 +520,26 @@ export function MiniHeroProfiles() {
     };
   }, []);
 
+  /** Прогрев кэша матчапов (тот же SQL, что при открытии профиля) — список героев + пауза, чтобы не конкурировать с heroStats. */
+  useEffect(() => {
+    if (isLoadingList || allHeroes.length === 0) return;
+    const batchSize = 18;
+    const staggerMs = 130;
+    const startDelayMs = 500;
+    const t0 = window.setTimeout(() => {
+      allHeroes.slice(0, batchSize).forEach((h, i) => {
+        window.setTimeout(() => prefetchHeroMatchupsLargeSample(h.id), i * staggerMs);
+      });
+    }, startDelayMs);
+    return () => clearTimeout(t0);
+  }, [isLoadingList, allHeroes]);
+
+  /** Сразу после появления heroId и списка героев — тот же fetch матчапов, что внутри профиля (общий in-flight). */
+  useEffect(() => {
+    if (activeHeroId == null || allHeroes.length === 0) return;
+    prefetchHeroMatchupsLargeSample(activeHeroId);
+  }, [activeHeroId, allHeroes.length]);
+
   useEffect(() => {
     let cancelled = false;
     if (allHeroes.length === 0) return;
@@ -478,200 +558,262 @@ export function MiniHeroProfiles() {
       return;
     }
 
-    (async () => {
-      try {
-        setIsLoadingProfile(true);
-        setError(null);
-        const [avgKdaRows, avgCoreRows] = await Promise.all([
-          fetchHeroAvgKdaCached(),
-          fetchHeroAvgCoreStatsCached()
-        ]);
-        if (cancelled) return;
+    (() => {
+      setIsLoadingProfile(true);
+      setIsLoadingMatchups(true);
+      setIsLoadingPopularBuild(true);
+      setError(null);
+      setLateItems([]);
+      setStartItems([]);
+      setTransitionItems([]);
 
-        const selectedHero =
-          allHeroes.find((h) => h.id === activeHeroId) ?? detectShadowFiend(allHeroes);
-        if (!selectedHero) {
-          setError("Не удалось найти выбранного героя в данных OpenDota.");
+      const selectedHero =
+        allHeroes.find((h) => h.id === activeHeroId) ?? detectShadowFiend(allHeroes);
+      if (!selectedHero) {
+        setError("Не удалось найти выбранного героя в данных OpenDota.");
+        setIsLoadingProfile(false);
+        setIsLoadingMatchups(false);
+        setIsLoadingPopularBuild(false);
+        return;
+      }
+
+      const heroById = new Map(allHeroes.map((h) => [h.id, h]));
+      const totalGames = allHeroes.reduce(
+        (acc, h) =>
+          acc +
+          h["1_pick"] +
+          h["2_pick"] +
+          h["3_pick"] +
+          h["4_pick"] +
+          h["5_pick"] +
+          h["6_pick"] +
+          h["7_pick"] +
+          h["8_pick"],
+        0
+      );
+      const heroGames =
+        selectedHero["1_pick"] +
+        selectedHero["2_pick"] +
+        selectedHero["3_pick"] +
+        selectedHero["4_pick"] +
+        selectedHero["5_pick"] +
+        selectedHero["6_pick"] +
+        selectedHero["7_pick"] +
+        selectedHero["8_pick"];
+      const pickRate = totalGames > 0 ? (heroGames * 10 * 100) / totalGames : 0;
+
+      const pKda = fetchHeroAvgKdaCached();
+      const pCore = fetchHeroAvgCoreStatsCached();
+      const pPop = fetchHeroItemPopularityCached(selectedHero.id);
+      const pBundle = fetchItemConstantsBundleCached();
+      const pTimings = fetchItemTimingsCached();
+      const pPurchase = fetchHeroItemPurchaseOrderCached(selectedHero.id);
+      setHero(selectedHero);
+      setStats({
+        winRate: pubWinRatePercent(selectedHero),
+        pickRate,
+        avgKills: null,
+        avgDeaths: null,
+        avgAssists: null,
+        avgHeroDamage: null,
+        avgHeroHealing: null,
+        avgGpm: null,
+        avgXpm: null,
+        avgTowerDamage: null
+      });
+      setIsLoadingProfile(false);
+
+      void Promise.all([pKda, pCore])
+        .then(([avgKdaRows, avgCoreRows]) => {
+          if (cancelled) return;
+          const heroKda = avgKdaRows.find((r) => r.hero_id === selectedHero.id) ?? null;
+          const heroCore = avgCoreRows.find((r) => r.hero_id === selectedHero.id) ?? null;
+          setStats((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  avgKills: heroKda?.avg_kills ?? null,
+                  avgDeaths: heroKda?.avg_deaths ?? null,
+                  avgAssists: heroKda?.avg_assists ?? null,
+                  avgHeroDamage: heroCore?.avg_hero_damage ?? null,
+                  avgHeroHealing: heroCore?.avg_hero_healing ?? null,
+                  avgGpm: heroCore?.avg_gold_per_min ?? null,
+                  avgXpm: heroCore?.avg_xp_per_min ?? null,
+                  avgTowerDamage: heroCore?.avg_tower_damage ?? null
+                }
+              : prev
+          );
+        })
+        .catch(() => {});
+
+      const applyItemBuild = (
+        pop: OpenDotaHeroItemPopularity | null,
+        bundle: Awaited<ReturnType<typeof fetchItemConstantsBundleCached>> | null,
+        timings: Awaited<ReturnType<typeof fetchItemTimingsCached>>,
+        purchaseOrder: OpenDotaHeroItemPurchaseOrderRow[]
+      ) => {
+        if (cancelled) return;
+        if (!pop || !bundle) {
+          setLateItems([]);
+          setStartItems([]);
+          setTransitionItems([]);
           return;
         }
+        try {
+          const idMap = itemIdMapFromConstants(bundle.constants);
+          const explorerTiming = buildAvgItemTimingByKeyFromPurchaseOrder(purchaseOrder);
+          const scenarioTiming = buildAvgItemTimingByKeyForHero(selectedHero.id, timings);
+          const avgTimingByItemKey = explorerTiming.size > 0 ? explorerTiming : scenarioTiming;
+          const nextLate = topLateGamePopularItems(
+            pop,
+            idMap,
+            6,
+            bundle.usedAsComponentKeys,
+            avgTimingByItemKey
+          );
+          const nextStart = topPopularItemsForPhase(pop.start_game_items, idMap, 6, {
+            avgTimingByItemKey
+          });
+          const merged = mergeItemCounts(pop.early_game_items, pop.mid_game_items);
+          const nextTransition = topPopularItemsForPhase(merged, idMap, 6, {
+            avgTimingByItemKey
+          });
 
-        const heroById = new Map(allHeroes.map((h) => [h.id, h]));
-        const totalGames = allHeroes.reduce(
-          (acc, h) =>
-            acc +
-            h["1_pick"] +
-            h["2_pick"] +
-            h["3_pick"] +
-            h["4_pick"] +
-            h["5_pick"] +
-            h["6_pick"] +
-            h["7_pick"] +
-            h["8_pick"],
-          0
-        );
-        const heroGames =
-          selectedHero["1_pick"] +
-          selectedHero["2_pick"] +
-          selectedHero["3_pick"] +
-          selectedHero["4_pick"] +
-          selectedHero["5_pick"] +
-          selectedHero["6_pick"] +
-          selectedHero["7_pick"] +
-          selectedHero["8_pick"];
+          setStartItems(orderItemsByBuildFlow(nextStart, idMap, avgTimingByItemKey));
+          setTransitionItems(orderItemsByBuildFlow(nextTransition, idMap, avgTimingByItemKey));
+          setLateItems(orderItemsByBuildFlow(nextLate, idMap, avgTimingByItemKey));
+        } catch {
+          setLateItems([]);
+          setStartItems([]);
+          setTransitionItems([]);
+        }
+      };
 
-        const heroKda = avgKdaRows.find((r) => r.hero_id === selectedHero.id) ?? null;
-        const heroCore = avgCoreRows.find((r) => r.hero_id === selectedHero.id) ?? null;
-        const pickRate = totalGames > 0 ? (heroGames * 10 * 100) / totalGames : 0;
-
-        setHero(selectedHero);
-        setStats({
-          winRate: pubWinRatePercent(selectedHero),
-          pickRate,
-          avgKills: heroKda?.avg_kills ?? null,
-          avgDeaths: heroKda?.avg_deaths ?? null,
-          avgAssists: heroKda?.avg_assists ?? null,
-          avgHeroDamage: heroCore?.avg_hero_damage ?? null,
-          avgHeroHealing: heroCore?.avg_hero_healing ?? null,
-          avgGpm: heroCore?.avg_gold_per_min ?? null,
-          avgXpm: heroCore?.avg_xp_per_min ?? null,
-          avgTowerDamage: heroCore?.avg_tower_damage ?? null
+      void Promise.all([pPop, pBundle])
+        .then(([pop, bundle]) => {
+          if (cancelled) return;
+          applyItemBuild(pop, bundle, [], []);
+          setIsLoadingPopularBuild(false);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLateItems([]);
+            setStartItems([]);
+            setTransitionItems([]);
+            setIsLoadingPopularBuild(false);
+          }
         });
 
-        setIsLoadingMatchups(true);
-        setIsLoadingPopularBuild(true);
-        setLateItems([]);
-        setStartItems([]);
-        setTransitionItems([]);
+      void Promise.all([pPop, pBundle, pTimings, pPurchase])
+        .then(([pop, bundle, timings, purchaseOrder]) => {
+          if (cancelled) return;
+          if (pop && bundle) {
+            applyItemBuild(pop, bundle, timings, purchaseOrder);
+          }
+        })
+        .catch(() => {});
 
-        (async () => {
+      const commitMatchups = (matchups: OpenDotaHeroMatchup[]) => {
+        if (cancelled) return;
+        const matchupRowsAll: HeroMatchupView[] = matchups
+          .filter((m) => m.games_played > 0 && heroById.has(m.hero_id))
+          .map((m) => ({
+            heroId: m.hero_id,
+            heroName: heroById.get(m.hero_id)?.localized_name ?? `Hero #${m.hero_id}`,
+            heroIcon: heroIconForList(heroById.get(m.hero_id)),
+            gamesPlayed: m.games_played,
+            heroWinRateVs: (m.wins / m.games_played) * 100
+          }));
+
+        const sourceRows = matchupRowsAll.filter((m) => m.gamesPlayed >= MIN_MATCHUP_GAMES_MINI_PROFILE);
+
+        const { counters, favorable } = pickCountersAndFavorable(sourceRows, MATCHUP_TOP_N);
+        setBestAgainst(favorable);
+        setBestCounters(counters);
+
+        const byRole = emptyRoleMatchupBuckets();
+
+        const roleFilter = (set: Set<string>) =>
+          sourceRows.filter((row) => set.has(row.heroName.toLowerCase()));
+
+        const fillRoleBucket = (key: RoleKey, rows: HeroMatchupView[]) => {
+          const pick = pickCountersAndFavorable(rows, MATCHUP_TOP_N);
+          byRole[key].strong = pick.favorable;
+          byRole[key].counters = pick.counters;
+        };
+
+        fillRoleBucket("carry", roleFilter(CARRY_HERO_NAMES));
+        fillRoleBucket("mid", roleFilter(MID_HERO_NAMES));
+        fillRoleBucket("offlane", roleFilter(OFFLANE_HERO_NAMES));
+        fillRoleBucket("softSupport", roleFilter(SOFT_SUPPORT_HERO_NAMES));
+        fillRoleBucket("hardSupport", roleFilter(HARD_SUPPORT_HERO_NAMES));
+        setRoleBuckets(byRole);
+      };
+
+      /**
+       * Матчапы сразу: устаревший кэш explorer → при отсутствии быстрый REST → затем свежий explorer (подмена без смены источника SQL).
+       */
+      void (async () => {
+        let hadStalePaint = false;
+        if (!cancelled) {
+          const stale = peekCachedMatchupsLargeAnyAge(selectedHero.id);
+          if (stale && stale.length > 0) {
+            commitMatchups(stale);
+            setIsLoadingMatchups(false);
+            hadStalePaint = true;
+          }
+        }
+
+        const pRest = fetchHeroMatchupsCached(selectedHero.id);
+        const pLarge = fetchHeroMatchupsLargeSampleCached(selectedHero.id);
+
+        let largeCommitted = false;
+        let restCommitted = false;
+
+        pLarge
+          .then((rows) => {
+            if (cancelled || rows.length === 0) return;
+            largeCommitted = true;
+            commitMatchups(rows);
+            setIsLoadingMatchups(false);
+          })
+          .catch(() => {});
+
+        pRest
+          .then((rows) => {
+            if (cancelled || rows.length === 0 || hadStalePaint || largeCommitted) return;
+            restCommitted = true;
+            commitMatchups(rows);
+            setIsLoadingMatchups(false);
+          })
+          .catch(() => {});
+
+        await Promise.allSettled([pRest, pLarge]);
+        if (cancelled) return;
+
+        const anyShown = hadStalePaint || largeCommitted || restCommitted;
+
+        if (!anyShown) {
           try {
-            const [pop, bundle, timings, purchaseOrder] = await Promise.all([
-              fetchHeroItemPopularityCached(selectedHero.id),
-              fetchItemConstantsBundleCached(),
-              fetchItemTimingsCached(),
-              fetchHeroItemPurchaseOrderCached(selectedHero.id)
-            ]);
-            if (cancelled) return;
-            if (!pop) {
-              setLateItems([]);
-              setStartItems([]);
-              setTransitionItems([]);
-            } else {
-              const idMap = itemIdMapFromConstants(bundle.constants);
-              const explorerTiming = buildAvgItemTimingByKeyFromPurchaseOrder(purchaseOrder);
-              const scenarioTiming = buildAvgItemTimingByKeyForHero(selectedHero.id, timings);
-              const avgTimingByItemKey = explorerTiming.size > 0 ? explorerTiming : scenarioTiming;
-              const nextLate = topLateGamePopularItems(
-                pop,
-                idMap,
-                6,
-                bundle.usedAsComponentKeys,
-                avgTimingByItemKey
-              );
-              const nextStart = topPopularItemsForPhase(pop.start_game_items, idMap, 6, {
-                avgTimingByItemKey
-              });
-              const merged = mergeItemCounts(pop.early_game_items, pop.mid_game_items);
-              const nextTransition = topPopularItemsForPhase(merged, idMap, 6, {
-                avgTimingByItemKey
-              });
-
-              setStartItems(orderItemsByBuildFlow(nextStart, idMap, avgTimingByItemKey));
-              setTransitionItems(orderItemsByBuildFlow(nextTransition, idMap, avgTimingByItemKey));
-              setLateItems(orderItemsByBuildFlow(nextLate, idMap, avgTimingByItemKey));
+            const fb = await fetchHeroMatchupsWithFallback(selectedHero.id);
+            if (!cancelled && fb.length > 0) {
+              commitMatchups(fb);
+            } else if (!cancelled) {
+              setBestAgainst([]);
+              setBestCounters([]);
+              setRoleBuckets(emptyRoleMatchupBuckets());
             }
           } catch {
             if (!cancelled) {
-              setLateItems([]);
-              setStartItems([]);
-              setTransitionItems([]);
+              setBestAgainst([]);
+              setBestCounters([]);
+              setRoleBuckets(emptyRoleMatchupBuckets());
             }
-          } finally {
-            if (!cancelled) setIsLoadingPopularBuild(false);
           }
-        })();
+        }
 
-        (async () => {
-          const largeMatchups = await fetchHeroMatchupsLargeSampleCached(selectedHero.id);
-          const fallbackMatchups =
-            largeMatchups.length > 0 ? [] : await fetchHeroMatchupsWithFallback(selectedHero.id);
-          const matchups = largeMatchups.length > 0 ? largeMatchups : fallbackMatchups;
-          if (cancelled) return;
-
-          const matchupRowsAll: HeroMatchupView[] = matchups
-            .filter((m) => m.games_played > 0 && heroById.has(m.hero_id))
-            .map((m) => ({
-              heroId: m.hero_id,
-              heroName: heroById.get(m.hero_id)?.localized_name ?? `Hero #${m.hero_id}`,
-              heroIcon: heroIconForList(heroById.get(m.hero_id)),
-              gamesPlayed: m.games_played,
-              heroWinRateVs: (m.wins / m.games_played) * 100
-            }));
-
-          const sourceRows = matchupRowsAll.filter((m) => m.gamesPlayed >= MIN_MATCHUP_GAMES_MINI_PROFILE);
-
-          const strongVs = [...sourceRows]
-            .sort((a, b) => {
-              const wr = b.heroWinRateVs - a.heroWinRateVs;
-              if (Math.abs(wr) > 0.001) return wr;
-              return b.gamesPlayed - a.gamesPlayed;
-            })
-            .slice(0, 5);
-
-          const counters = [...sourceRows]
-            .sort((a, b) => {
-              const wr = a.heroWinRateVs - b.heroWinRateVs;
-              if (Math.abs(wr) > 0.001) return wr;
-              return b.gamesPlayed - a.gamesPlayed;
-            })
-            .slice(0, 5);
-
-          if (cancelled) return;
-          setBestAgainst(strongVs);
-          setBestCounters(counters);
-
-          const byRole: RoleMatchupBuckets = {
-            carry: { label: "Carry", counters: [], strong: [] },
-            mid: { label: "Mid", counters: [], strong: [] },
-            offlane: { label: "Offlane", counters: [], strong: [] },
-            softSupport: { label: "Soft support", counters: [], strong: [] },
-            hardSupport: { label: "Hard support", counters: [], strong: [] }
-          };
-
-          const roleFilter = (set: Set<string>) =>
-            sourceRows.filter((row) => set.has(row.heroName.toLowerCase()));
-
-          const fillRoleBucket = (key: RoleKey, rows: HeroMatchupView[]) => {
-            byRole[key].strong = [...rows]
-              .sort((a, b) => {
-                const wr = b.heroWinRateVs - a.heroWinRateVs;
-                if (Math.abs(wr) > 0.001) return wr;
-                return b.gamesPlayed - a.gamesPlayed;
-              })
-              .slice(0, 5);
-
-            byRole[key].counters = [...rows]
-              .sort((a, b) => {
-                const wr = a.heroWinRateVs - b.heroWinRateVs;
-                if (Math.abs(wr) > 0.001) return wr;
-                return b.gamesPlayed - a.gamesPlayed;
-              })
-              .slice(0, 5);
-          };
-
-          fillRoleBucket("carry", roleFilter(CARRY_HERO_NAMES));
-          fillRoleBucket("mid", roleFilter(MID_HERO_NAMES));
-          fillRoleBucket("offlane", roleFilter(OFFLANE_HERO_NAMES));
-          fillRoleBucket("softSupport", roleFilter(SOFT_SUPPORT_HERO_NAMES));
-          fillRoleBucket("hardSupport", roleFilter(HARD_SUPPORT_HERO_NAMES));
-          setRoleBuckets(byRole);
-          setIsLoadingMatchups(false);
-        })();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Не удалось загрузить мини-профиль героя.");
-      } finally {
-        if (!cancelled) setIsLoadingProfile(false);
-      }
+        if (!cancelled) setIsLoadingMatchups(false);
+      })();
     })();
 
     return () => {
@@ -704,6 +846,7 @@ export function MiniHeroProfiles() {
                   key={h.id}
                   type="button"
                   className="hero-list-item"
+                  onMouseEnter={() => prefetchHeroMatchupsLargeSample(h.id)}
                   onClick={() => {
                     setActiveHeroId(h.id);
                     navigateToHeroProfile(h.id);

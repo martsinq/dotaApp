@@ -90,16 +90,16 @@ function App() {
     <>
       <header className="top-nav">
         <button
-          className={mode === "draft" ? "top-nav-btn active" : "top-nav-btn"}
-          onClick={() => navigate("draft")}
-        >
-          Анализ драфта
-        </button>
-        <button
           className={mode === "cm" ? "top-nav-btn active" : "top-nav-btn"}
           onClick={() => navigate("cm")}
         >
           Драфт vs бота
+        </button>
+        <button
+          className={mode === "draft" ? "top-nav-btn active" : "top-nav-btn"}
+          onClick={() => navigate("draft")}
+        >
+          Анализ драфта
         </button>
         <button
           className={mode === "profiles" ? "top-nav-btn active" : "top-nav-btn"}

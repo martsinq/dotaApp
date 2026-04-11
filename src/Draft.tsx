@@ -3,6 +3,7 @@ import {
   fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
+  heroPortraitUrlCandidates,
   pubWinRatePercent,
   type OpenDotaHeroMatchup,
   type OpenDotaHeroStats
@@ -390,7 +391,7 @@ export function Draft() {
                         >
                           <HeroAssetImage
                             hero={heroByName[item.hero]}
-                            type="icon"
+                            type="portrait"
                             className="hero-icon result-hero-icon"
                             alt={item.hero}
                           />
@@ -586,7 +587,8 @@ function HeroAutocomplete({ value, heroes, onChange, disabled, heroByName }: Her
 
 type HeroAssetImageProps = {
   hero?: OpenDotaHeroStats;
-  type: "img" | "icon";
+  /** `portrait` — те же URL, что на странице «Герои» (HeroMeta). */
+  type: "img" | "icon" | "portrait";
   className: string;
   alt: string;
 };
@@ -648,9 +650,12 @@ function formatSigned(value: number): string {
 
 function buildHeroAssetCandidates(
   hero: OpenDotaHeroStats | undefined,
-  type: "img" | "icon"
+  type: "img" | "icon" | "portrait"
 ): string[] {
   if (!hero) return [];
+  if (type === "portrait") {
+    return heroPortraitUrlCandidates(hero.name, hero.img, hero.icon);
+  }
   const raw = type === "img" ? hero.img : hero.icon;
   if (!raw) return [];
 

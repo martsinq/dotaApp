@@ -88,6 +88,9 @@ type CacheEntry<T> = {
 
 const CACHE_VERSION = 2;
 
+/** Параллельные вызовы fetchHeroMatchupsLargeSampleCached для одного hero_id — один сетевой запрос. */
+const inFlightHeroMatchupsLarge = new Map<number, Promise<OpenDotaHeroMatchup[]>>();
+
 function cacheKey(key: string): string {
   return `opendota:${CACHE_VERSION}:${key}`;
 }
@@ -300,7 +303,8 @@ export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenD
   if (cached) return cached;
   const innerFrom =
     "SELECT hero_id, kills, deaths, assists, match_id FROM player_matches ORDER BY match_id DESC LIMIT ";
-  const limits = [sampleLimit, 150000, 90000, 50000];
+  // Меньшие выборки первыми — быстрее ответ explorer, данных обычно достаточно.
+  const limits = [100000, 150000, sampleLimit, 90000, 50000];
   for (const limit of limits) {
     try {
       const sql = [
@@ -312,7 +316,8 @@ export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenD
       ].join(" ");
 
       const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
-        `/explorer?sql=${encodeURIComponent(sql)}`
+        `/explorer?sql=${encodeURIComponent(sql)}`,
+        { timeoutMs: 20000 }
       );
       if (data.err) continue;
 
@@ -351,7 +356,7 @@ export async function fetchHeroAvgCoreStatsCached(
   if (cached) return cached;
   const innerFrom =
     "SELECT hero_id, hero_damage, hero_healing, gold_per_min, xp_per_min, tower_damage, match_id FROM player_matches ORDER BY match_id DESC LIMIT ";
-  const limits = [sampleLimit, 150000, 90000, 50000];
+  const limits = [100000, 150000, sampleLimit, 90000, 50000];
   for (const limit of limits) {
     try {
       const sql = [
@@ -368,7 +373,8 @@ export async function fetchHeroAvgCoreStatsCached(
       ].join(" ");
 
       const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
-        `/explorer?sql=${encodeURIComponent(sql)}`
+        `/explorer?sql=${encodeURIComponent(sql)}`,
+        { timeoutMs: 20000 }
       );
       if (data.err) continue;
 
@@ -420,63 +426,91 @@ export async function fetchHeroMatchupsLargeSampleCached(
   const cached = getCached<OpenDotaHeroMatchup[]>(key, 1000 * 60 * 60 * 12); // 12h
   if (cached) return cached;
 
-  const limits = [sampleLimit, 200000, 150000, 100000, 50000];
-  for (const limit of limits) {
+  const existing = inFlightHeroMatchupsLarge.get(heroId);
+  if (existing) return existing;
+
+  const task = (async (): Promise<OpenDotaHeroMatchup[]> => {
     try {
-      const sql = [
-        "WITH me AS (",
-        "  SELECT pm.match_id, pm.player_slot, m.radiant_win",
-        "  FROM player_matches pm",
-        "  JOIN matches m ON m.match_id = pm.match_id",
-        `  WHERE pm.hero_id = ${heroId}`,
-        "  ORDER BY pm.match_id DESC",
-        `  LIMIT ${limit}`,
-        ")",
-        "SELECT",
-        "  opp.hero_id AS hero_id,",
-        "  COUNT(*)::int AS games_played,",
-        "  SUM((",
-        "    (me.player_slot < 128 AND me.radiant_win = true) OR",
-        "    (me.player_slot >= 128 AND me.radiant_win = false)",
-        "  )::int)::int AS wins",
-        "FROM me",
-        "JOIN player_matches opp ON opp.match_id = me.match_id",
-        "WHERE",
-        "  (me.player_slot < 128 AND opp.player_slot >= 128) OR",
-        "  (me.player_slot >= 128 AND opp.player_slot < 128)",
-        "GROUP BY opp.hero_id"
-      ].join(" ");
+      const limits = [100000, 150000, 200000, sampleLimit, 50000];
+      for (const limit of limits) {
+        try {
+          const sql = [
+            "WITH me AS (",
+            "  SELECT pm.match_id, pm.player_slot, m.radiant_win",
+            "  FROM player_matches pm",
+            "  JOIN matches m ON m.match_id = pm.match_id",
+            `  WHERE pm.hero_id = ${heroId}`,
+            "  ORDER BY pm.match_id DESC",
+            `  LIMIT ${limit}`,
+            ")",
+            "SELECT",
+            "  opp.hero_id AS hero_id,",
+            "  COUNT(*)::int AS games_played,",
+            "  SUM((",
+            "    (me.player_slot < 128 AND me.radiant_win = true) OR",
+            "    (me.player_slot >= 128 AND me.radiant_win = false)",
+            "  )::int)::int AS wins",
+            "FROM me",
+            "JOIN player_matches opp ON opp.match_id = me.match_id",
+            "WHERE",
+            "  (me.player_slot < 128 AND opp.player_slot >= 128) OR",
+            "  (me.player_slot >= 128 AND opp.player_slot < 128)",
+            "GROUP BY opp.hero_id"
+          ].join(" ");
 
-      const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
-        `/explorer?sql=${encodeURIComponent(sql)}`
-      );
-      if (data.err) continue;
+          const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
+            `/explorer?sql=${encodeURIComponent(sql)}`,
+            { timeoutMs: 22000 }
+          );
+          if (data.err) continue;
 
-      const rows = (data.rows ?? [])
-        .map((row) => ({
-          hero_id: Number(row.hero_id),
-          games_played: Number(row.games_played),
-          wins: Number(row.wins)
-        }))
-        .filter(
-          (row) =>
-            Number.isFinite(row.hero_id) &&
-            Number.isFinite(row.games_played) &&
-            Number.isFinite(row.wins) &&
-            row.hero_id > 0 &&
-            row.games_played > 0
-        );
+          const rows = (data.rows ?? [])
+            .map((row) => ({
+              hero_id: Number(row.hero_id),
+              games_played: Number(row.games_played),
+              wins: Number(row.wins)
+            }))
+            .filter(
+              (row) =>
+                Number.isFinite(row.hero_id) &&
+                Number.isFinite(row.games_played) &&
+                Number.isFinite(row.wins) &&
+                row.hero_id > 0 &&
+                row.games_played > 0
+            );
 
-      if (rows.length > 0) {
-        setCached(key, rows);
-        return rows;
+          if (rows.length > 0) {
+            setCached(key, rows);
+            return rows;
+          }
+        } catch {
+          // try smaller sample on timeout / network issues
+        }
       }
-    } catch {
-      // try smaller sample on timeout / network issues
-    }
-  }
 
-  return [];
+      return [];
+    } finally {
+      inFlightHeroMatchupsLarge.delete(heroId);
+    }
+  })();
+
+  inFlightHeroMatchupsLarge.set(heroId, task);
+  return task;
+}
+
+/** Прогревает кэш до открытия профиля; те же данные и SQL, что и fetchHeroMatchupsLargeSampleCached. */
+export function prefetchHeroMatchupsLargeSample(heroId: number): void {
+  void fetchHeroMatchupsLargeSampleCached(heroId).catch(() => {});
+}
+
+/**
+ * Закэшированный большой сэмпл без проверки TTL — для мгновенного UI (затем подменится свежим explorer).
+ * Те же ключ и формат, что у fetchHeroMatchupsLargeSampleCached.
+ */
+export function peekCachedMatchupsLargeAnyAge(heroId: number): OpenDotaHeroMatchup[] | null {
+  const key = `matchupsLarge:${heroId}:300000`;
+  const data = getCached<OpenDotaHeroMatchup[]>(key, Number.MAX_SAFE_INTEGER);
+  return data && data.length > 0 ? data : null;
 }
 
 /** Matchups for scoring; on network/API failure returns [] so UI still works. */
@@ -532,7 +566,7 @@ export async function fetchHeroItemPurchaseOrderCached(
   const cached = getCached<OpenDotaHeroItemPurchaseOrderRow[]>(key, 1000 * 60 * 60 * 12);
   if (cached) return cached;
 
-  const limits = [sampleLimit, 1200, 900, 600, 400, 250];
+  const limits = [500, 800, 1200, sampleLimit, 400, 250];
   for (const limit of limits) {
     try {
       const sql = [
@@ -558,7 +592,8 @@ export async function fetchHeroItemPurchaseOrderCached(
       ].join(" ");
 
       const data = await fetchJson<{ rows?: Array<Record<string, unknown>>; err?: string }>(
-        `/explorer?sql=${encodeURIComponent(sql)}`
+        `/explorer?sql=${encodeURIComponent(sql)}`,
+        { timeoutMs: 20000 }
       );
       if (data.err) continue;
 
