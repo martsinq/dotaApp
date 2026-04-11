@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   fetchItemConstantsCached,
-  fetchItemTimingsCached,
+  fetchItemMetaStatsCached,
   itemImageUrlCandidates,
   type OpenDotaItemConstant,
-  type OpenDotaItemTimingScenario
+  type OpenDotaItemMetaStatRow
 } from "./opendota";
 
 type ItemMetaRow = {
@@ -21,16 +21,26 @@ type ItemMetaRow = {
 type SortKey = "name" | "winRate" | "scenarioShare" | "cost";
 type SortDir = "asc" | "desc";
 
-function aggregateByItem(rows: OpenDotaItemTimingScenario[]): Map<string, { games: number; wins: number }> {
-  const m = new Map<string, { games: number; wins: number }>();
+function itemIdMapFromConstants(constants: Record<string, OpenDotaItemConstant>): Map<number, OpenDotaItemConstant> {
+  const m = new Map<number, OpenDotaItemConstant>();
+  for (const def of Object.values(constants)) {
+    if (!def.id || def.id <= 0 || m.has(def.id)) continue;
+    m.set(def.id, def);
+  }
+  return m;
+}
+
+function aggregateByItemId(rows: OpenDotaItemMetaStatRow[]): Map<number, { games: number; wins: number; totalPlayers: number }> {
+  const m = new Map<number, { games: number; wins: number; totalPlayers: number }>();
   for (const r of rows) {
-    const g = Number(r.games);
-    const w = Number(r.wins);
-    if (!Number.isFinite(g) || g <= 0 || !Number.isFinite(w)) continue;
-    const prev = m.get(r.item) ?? { games: 0, wins: 0 };
-    prev.games += g;
-    prev.wins += w;
-    m.set(r.item, prev);
+    if (!Number.isFinite(r.item_id) || r.item_id <= 0) continue;
+    if (!Number.isFinite(r.games) || r.games <= 0) continue;
+    if (!Number.isFinite(r.wins) || r.wins < 0) continue;
+    const prev = m.get(r.item_id) ?? { games: 0, wins: 0, totalPlayers: 0 };
+    prev.games += r.games;
+    prev.wins += r.wins;
+    prev.totalPlayers = Math.max(prev.totalPlayers, r.total_players);
+    m.set(r.item_id, prev);
   }
   return m;
 }
@@ -72,30 +82,31 @@ export function ItemMeta() {
       try {
         setIsLoading(true);
         setError(null);
-        const [timings, constants] = await Promise.all([
-          fetchItemTimingsCached(),
+        const [stats, constants] = await Promise.all([
+          fetchItemMetaStatsCached(),
           fetchItemConstantsCached()
         ]);
         if (cancelled) return;
 
-        const agg = aggregateByItem(timings);
-        let totalGames = 0;
-        for (const { games } of agg.values()) {
-          totalGames += games;
+        const agg = aggregateByItemId(stats);
+        const defsById = itemIdMapFromConstants(constants);
+        let totalPlayers = 0;
+        for (const row of agg.values()) {
+          totalPlayers = Math.max(totalPlayers, row.totalPlayers);
         }
 
         const built: ItemMetaRow[] = [];
-        for (const [key, { games, wins }] of agg.entries()) {
-          const def: OpenDotaItemConstant | undefined = constants[key];
+        for (const [itemId, { games, wins }] of agg.entries()) {
+          const def: OpenDotaItemConstant | undefined = defsById.get(itemId);
           if (!def) continue;
           built.push({
-            key,
+            key: def.internalKey ?? `item_${itemId}`,
             name: def.dname,
             cost: def.cost != null && Number.isFinite(def.cost) ? def.cost : null,
             games,
             wins,
             winRate: games > 0 ? (wins / games) * 100 : 0,
-            scenarioShare: totalGames > 0 ? (games / totalGames) * 100 : 0,
+            scenarioShare: totalPlayers > 0 ? (games / totalPlayers) * 100 : 0,
             img: def.img
           });
         }
@@ -159,11 +170,6 @@ export function ItemMeta() {
     <div className="item-meta-page">
       <div className="card item-meta-content">
         <h1>Предметы</h1>
-        <p className="subtitle item-meta-disclaimer">
-          Статистика из OpenDota API <code>scenarios/itemTimings</code>: сценарии закупки по героям и таймингам.
-          Винрейт — среди этих покупок. «Частота выбора» — доля покупок предмета среди всех учтённых на этой странице (не
-          процент от всех матчей Dota).
-        </p>
         {error && <div className="error-banner">{error}</div>}
 
         <div className="toolbar item-meta-toolbar">
@@ -234,9 +240,6 @@ export function ItemMeta() {
             </table>
           )}
         </div>
-        <p className="hint hero-meta-hint">
-          В списке только предметы, для которых OpenDota публикует сценарии таймингов (около сотни позиций).
-        </p>
       </div>
     </div>
   );

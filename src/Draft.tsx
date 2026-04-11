@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
@@ -121,6 +121,8 @@ export function Draft() {
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<HeroStats>({ baseWinRate: {}, counterVs: {} });
+  const [draftGridHeight, setDraftGridHeight] = useState<number | null>(null);
+  const draftGridRef = useRef<HTMLDivElement | null>(null);
   const allPicked = [...radiant, ...dire].filter(Boolean);
   const [autoSuggest, setAutoSuggest] = useState(true);
 
@@ -160,6 +162,33 @@ export function Draft() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = draftGridRef.current;
+    if (!el) return;
+
+    const updateHeight = () => {
+      setDraftGridHeight(el.getBoundingClientRect().height);
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(() => updateHeight());
+    observer.observe(el);
+    window.addEventListener("resize", updateHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateHeight);
     };
   }, []);
 
@@ -247,16 +276,16 @@ export function Draft() {
   }
 
   return (
-    <>
-      <h1>Dota 2 Draft Helper</h1>
-      <p className="subtitle">
+    <div className="draft-page">
+      <h1 className="draft-title">Dota 2 Draft Helper</h1>
+      <p className="subtitle draft-subtitle">
         Выберите героев для команд Света (Radiant) и Тьмы (Dire), затем нажмите "Предложить
         выбор". Алгоритм учитывает базовый винрейт, синергию с союзниками и эффективность против
         вражеских героев.
       </p>
       {error && <div className="error-banner">{error}</div>}
 
-      <section className="team-select">
+      <section className="team-select draft-team-select">
         <p className="team-select-title">Выберите команду</p>
         <div className="team-select-actions">
           <button
@@ -276,7 +305,7 @@ export function Draft() {
         </div>
       </section>
 
-      <div className="toolbar">
+      <div className="toolbar draft-toolbar">
         <label className="toggle">
           <input
             type="checkbox"
@@ -297,94 +326,99 @@ export function Draft() {
         )}
       </div>
 
-      <div className="grid">
-        <TeamCard
-          title="Силы Света (Radiant)"
-          teamKey="radiant"
-          titleClassName="team-title-radiant"
-          values={radiant}
-          allPicked={allPicked}
-          disabled={isLoadingData}
-          onChange={updateSlot}
-          heroes={heroes}
-          heroByName={heroByName}
-        />
+      <div className="draft-layout">
+        <div className="draft-layout-left">
+          <div className="grid draft-grid" ref={draftGridRef}>
+            <TeamCard
+              title="Силы Света (Radiant)"
+              teamKey="radiant"
+              titleClassName="team-title-radiant"
+              values={radiant}
+              allPicked={allPicked}
+              disabled={isLoadingData}
+              onChange={updateSlot}
+              heroes={heroes}
+              heroByName={heroByName}
+            />
 
-        <TeamCard
-          title="Силы Тьмы (Dire)"
-          teamKey="dire"
-          titleClassName="team-title-dire"
-          values={dire}
-          allPicked={allPicked}
-          disabled={isLoadingData}
-          onChange={updateSlot}
-          heroes={heroes}
-          heroByName={heroByName}
-        />
-      </div>
+            <TeamCard
+              title="Силы Тьмы (Dire)"
+              teamKey="dire"
+              titleClassName="team-title-dire"
+              values={dire}
+              allPicked={allPicked}
+              disabled={isLoadingData}
+              onChange={updateSlot}
+              heroes={heroes}
+              heroByName={heroByName}
+            />
+          </div>
 
-      <div className="actions">
-        <button className="secondary" onClick={clearAll} disabled={isLoadingData || isSuggesting}>
-          Очистить
-        </button>
-      </div>
+          <div className="actions draft-actions">
+            <button className="secondary" onClick={clearAll} disabled={isLoadingData || isSuggesting}>
+              Очистить
+            </button>
+          </div>
+        </div>
 
-      <section className="card results">
-        <h3>Рекомендации по позициям ({suggestTeam === "radiant" ? "Свет" : "Тьма"})</h3>
-        <ul className="result-list">
-          {isLoadingData && (
-            <li className="result-item">Загрузка данных OpenDota...</li>
-          )}
-          {!isLoadingData && resultByPos.length === 0 && (
-            <li className="result-item">
-              Нажмите "Предложить выбор", чтобы получить топ-5 героев для каждой пустой позиции.
-            </li>
-          )}
-          {resultByPos.map((position) => (
-            <li key={position.pos} className="result-item result-item-column">
-              <strong>pos {position.pos}</strong>
-              {position.candidates.map((item) => (
-                <div key={item.hero} className="result-row">
-                  <div className="result-hero">
-                    <button
-                      type="button"
-                      className="draft-profile-link"
-                      onClick={() => openHeroProfileByName(item.hero, heroByName)}
-                      title={`Открыть профиль: ${item.hero}`}
-                    >
-                      <HeroAssetImage
-                        hero={heroByName[item.hero]}
-                        type="icon"
-                        className="hero-icon result-hero-icon"
-                        alt={item.hero}
-                      />
-                      <span>
-                        {item.hero}
-                        <br />
-                        <small className="muted">
-                          {buildDetails(
-                            item.hero,
-                            suggestTeam === "radiant"
-                              ? dire.filter(Boolean)
-                              : radiant.filter(Boolean),
-                            stats
-                          )}
-                        </small>
-                      </span>
-                    </button>
-                  </div>
-                  <span className="score">{item.score.toFixed(2)}</span>
-                </div>
+        <div className="draft-layout-right">
+          <section
+            className="card results draft-results-card"
+            style={draftGridHeight ? { height: `${Math.max(220, Math.round(draftGridHeight))}px` } : undefined}
+          >
+            <h3>Рекомендации по позициям ({suggestTeam === "radiant" ? "Свет" : "Тьма"})</h3>
+            <ul className="result-list">
+              {isLoadingData && (
+                <li className="result-item">Загрузка данных OpenDota...</li>
+              )}
+              {!isLoadingData && resultByPos.length === 0 && (
+                <li className="result-item">
+                  Нажмите "Предложить выбор", чтобы получить топ-5 героев для каждой пустой позиции.
+                </li>
+              )}
+              {resultByPos.map((position) => (
+                <li key={position.pos} className="result-item result-item-column">
+                  <strong className="draft-pos-header">pos {position.pos}</strong>
+                  {position.candidates.map((item) => (
+                    <div key={item.hero} className="result-row">
+                      <div className="result-hero">
+                        <button
+                          type="button"
+                          className="draft-profile-link"
+                          onClick={() => openHeroProfileByName(item.hero, heroByName)}
+                          title={`Открыть профиль: ${item.hero}`}
+                        >
+                          <HeroAssetImage
+                            hero={heroByName[item.hero]}
+                            type="icon"
+                            className="hero-icon result-hero-icon"
+                            alt={item.hero}
+                          />
+                          <span>
+                            {item.hero}
+                            <br />
+                            <small className="muted">
+                              {buildDetails(
+                                item.hero,
+                                suggestTeam === "radiant"
+                                  ? dire.filter(Boolean)
+                                  : radiant.filter(Boolean),
+                                stats
+                              )}
+                            </small>
+                          </span>
+                        </button>
+                      </div>
+                      <span className="score">{item.score.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </li>
               ))}
-            </li>
-          ))}
-        </ul>
-        <p className="hint">
-          Для каждой незаполненной позиции выбранной команды показываются 5 лучших вариантов.
-          Рейтинг учитывает pub WR, контру против врагов и соответствие роли позиции.
-        </p>
-      </section>
-    </>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -422,12 +456,12 @@ function TeamCard({
   onChange
 }: TeamCardProps) {
   return (
-    <section className="card">
+    <section className="card draft-team-card">
       <h2 className={titleClassName}>{title}</h2>
       <div className="slots">
         {values.map((value, idx) => (
           <div key={`${teamKey}-${idx}`}>
-            <label className="pos-label">pos {idx + 1}</label>
+            <label className="pos-label draft-pos-label">pos {idx + 1}</label>
             <HeroAutocomplete
               value={value}
               heroes={heroes.filter((hero) => !allPicked.includes(hero) || hero === value)}
@@ -680,41 +714,6 @@ function isHeroSuitableForPosition(
     default:
       return rules.coreRoles.some((role) => hero.roles.includes(role));
   }
-}
-
-function passesPositionHardFilter(
-  heroName: string,
-  positionIndex: number,
-  heroByName: Record<string, OpenDotaHeroStats>
-): boolean {
-  const hero = heroByName[heroName];
-  if (!hero) return true;
-
-  if (positionIndex === 1) {
-    const hasMidTraits =
-      hero.roles.includes("Nuker") ||
-      hero.roles.includes("Escape") ||
-      hero.roles.includes("Disabler") ||
-      (hero.roles.includes("Carry") && hero.roles.includes("Disabler"));
-
-    const isPureSupport =
-      hero.roles.includes("Support") &&
-      !hero.roles.includes("Carry") &&
-      !hero.roles.includes("Nuker") &&
-      !hero.roles.includes("Escape") &&
-      !hero.roles.includes("Disabler");
-
-    const heavyOfflaneProfile =
-      hero.roles.includes("Durable") &&
-      hero.roles.includes("Initiator") &&
-      !hero.roles.includes("Nuker") &&
-      !hero.roles.includes("Escape") &&
-      !hero.roles.includes("Carry");
-
-    return hasMidTraits && !isPureSupport && !heavyOfflaneProfile;
-  }
-
-  return true;
 }
 
 async function buildCounterTablesFromEnemies(

@@ -106,6 +106,24 @@ const INVOKER_SPELLS: InvokerSpell[] = [
   }
 ];
 
+const INVOKER_SPELL_ICON_URLS: readonly string[] = Array.from(
+  new Set(INVOKER_SPELLS.map((s) => s.iconUrl))
+);
+
+function preloadInvokerSpellIcons(urls: readonly string[]): Promise<void> {
+  return Promise.all(
+    urls.map(
+      (url) =>
+        new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = url;
+        })
+    )
+  ).then(() => undefined);
+}
+
 type FallingSpell = {
   id: number;
   lane: LaneIndex;
@@ -118,18 +136,42 @@ type InvokerTrainerProps = {
   onBack: () => void;
 };
 
+const INVOKER_BEST_TIME_KEY = "invoker-trainer-best-seconds";
+
+function readStoredBestInvokerTime(): number {
+  try {
+    const raw = localStorage.getItem(INVOKER_BEST_TIME_KEY);
+    const n = raw != null ? Number.parseFloat(raw) : 0;
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function InvokerTrainer({ onBack }: InvokerTrainerProps) {
   const [running, setRunning] = useState(false);
+  const [iconsReady, setIconsReady] = useState(false);
   const [spells, setSpells] = useState<FallingSpell[]>([]);
   const inputRef = useRef(""); // последние 3 нажатия q/w/e (для детекта q/w/e + r)
   const [startTime, setStartTime] = useState<number | null>(null);
   const [endTime, setEndTime] = useState<number | null>(null);
   const [baseDuration, setBaseDuration] = useState(4500); // скорость падения
+  const [bestRecordSec, setBestRecordSec] = useState(readStoredBestInvokerTime);
   const spawnIntervalRef = useRef<number | null>(null);
   const nowRef = useRef(performance.now());
   const spellsRef = useRef<FallingSpell[]>([]);
   const nextIdRef = useRef(0);
   const pauseStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void preloadInvokerSpellIcons(INVOKER_SPELL_ICON_URLS).then(() => {
+      if (!cancelled) setIconsReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Текущий прогресс для анимации
   const [tick, setTick] = useState(0);
@@ -275,6 +317,23 @@ export function InvokerTrainer({ onBack }: InvokerTrainerProps) {
     }
   }, [running, spells, tick]);
 
+  useEffect(() => {
+    if (startTime === null || endTime === null) return;
+    const seconds = (endTime - startTime) / 1000;
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    setBestRecordSec((prev) => {
+      if (seconds > prev) {
+        try {
+          localStorage.setItem(INVOKER_BEST_TIME_KEY, String(seconds));
+        } catch {
+          /* quota / private mode */
+        }
+        return seconds;
+      }
+      return prev;
+    });
+  }, [endTime, startTime]);
+
   const handleStart = () => {
     // Если тренировка уже завершена (поражение) — начинаем заново.
     if (endTime !== null) {
@@ -360,7 +419,11 @@ export function InvokerTrainer({ onBack }: InvokerTrainerProps) {
         </button>
         <h2 className="invoker-trainer-title">Invoker Spell Trainer</h2>
         <div className="invoker-trainer-status">
-          Время: <strong>{elapsedSec} cек</strong>
+          Время: <strong>{elapsedSec} сек</strong>
+          <span className="muted">
+            {" "}
+            · Рекорд: <strong>{bestRecordSec.toFixed(2)} сек</strong>
+          </span>
         </div>
       </div>
 
@@ -383,7 +446,12 @@ export function InvokerTrainer({ onBack }: InvokerTrainerProps) {
                       className="invoker-trainer-spell"
                       style={{ top: `${top}%` }}
                     >
-                      <img src={spell.spell.iconUrl} alt={spell.spell.name} />
+                      <img
+                        src={spell.spell.iconUrl}
+                        alt={spell.spell.name}
+                        loading="eager"
+                        decoding="async"
+                      />
                     </div>
                   );
                 })}
@@ -395,8 +463,8 @@ export function InvokerTrainer({ onBack }: InvokerTrainerProps) {
 
       <div className="invoker-trainer-controls">
         {!running ? (
-          <button className="primary" onClick={handleStart}>
-            Старт
+          <button className="primary" onClick={handleStart} disabled={!iconsReady}>
+            {iconsReady ? "Старт" : "Загрузка иконок…"}
           </button>
         ) : (
           <button className="secondary" onClick={handleStop}>

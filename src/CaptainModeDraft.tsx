@@ -20,40 +20,34 @@ import {
 
 const emptySlots = (): string[] => Array.from({ length: 5 }, () => "");
 
-function buildHeroAssetCandidates(
-  hero: OpenDotaHeroStats | undefined,
-  type: "img" | "icon"
-): string[] {
+/** Как на странице «Герои» / мета: портрет `img`, иначе `icon`; Steam + OpenDota. */
+function buildHeroImageUrlsLikeProfiles(hero: OpenDotaHeroStats | undefined): string[] {
   if (!hero) return [];
-  const raw = type === "img" ? hero.img : hero.icon;
+  const raw = hero.img || hero.icon;
   if (!raw) return [];
   const path = raw.startsWith("/") ? raw : `/${raw}`;
   const pathNoQuery = path.split("?")[0];
   return [
     `https://cdn.cloudflare.steamstatic.com${pathNoQuery}`,
-    `https://api.opendota.com${pathNoQuery}`,
-    `https://steamcdn-a.akamaihd.net${pathNoQuery}`,
-    `https://cdn.cloudflare.steamstatic.com${path}`
+    `https://api.opendota.com${pathNoQuery}`
   ];
 }
 
 function HeroAssetImage({
   hero,
-  type,
   className,
   alt
 }: {
   hero?: OpenDotaHeroStats;
-  type: "img" | "icon";
   className: string;
   alt: string;
 }) {
-  const sources = useMemo(() => buildHeroAssetCandidates(hero, type), [hero, type]);
+  const sources = useMemo(() => buildHeroImageUrlsLikeProfiles(hero), [hero]);
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
     setIdx(0);
-  }, [sources.length, hero?.id, type]);
+  }, [sources.length, hero?.id]);
 
   if (sources.length === 0) {
     return <div className={`${className} placeholder`} aria-hidden="true" />;
@@ -65,6 +59,7 @@ function HeroAssetImage({
       src={sources[idx]}
       alt={alt}
       loading="lazy"
+      decoding="async"
       onError={() => setIdx((prev) => (prev + 1 < sources.length ? prev + 1 : prev))}
     />
   );
@@ -613,7 +608,6 @@ export function CaptainModeDraft() {
                     >
                       <HeroAssetImage
                         hero={heroByName[heroName]}
-                        type="icon"
                         className="cm-slot-icon"
                         alt=""
                       />
@@ -703,7 +697,6 @@ export function CaptainModeDraft() {
                   >
                     <HeroAssetImage
                       hero={heroByName[hero]}
-                      type="icon"
                       className="cm-grid-icon"
                       alt=""
                     />

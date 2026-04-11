@@ -3,10 +3,10 @@ import {
   fetchHeroAvgCoreStatsCached,
   fetchHeroAvgKdaCached,
   fetchHeroStatsCached,
+  heroPortraitUrlCandidates,
   pubWinRatePercent,
   type OpenDotaHeroStats
 } from "./opendota";
-import { useMemo as useMemoDraft } from "react";
 
 type HeroMetaRow = {
   hero: OpenDotaHeroStats;
@@ -131,6 +131,7 @@ const MID_HERO_NAMES = normalizeNames([
   "Razor",
   "Sniper",
   "Outworld Devourer",
+  "Outworld Destroyer",
   "Death Prophet",
   "Sand King",
   "Beastmaster",
@@ -510,7 +511,17 @@ export function HeroMeta() {
     });
 
     return sorted;
-  }, [rows, sortBy, sortDir, totalGames, totalBans, totalProPicks, search, selectedRoles, selectedBracket]);
+  }, [
+    rows,
+    sortBy,
+    sortDir,
+    totalGames,
+    totalBans,
+    totalProPicks,
+    search,
+    selectedRoles,
+    selectedBracket
+  ]);
 
   const formatPercent = (value: number): string => `${value.toFixed(1)}%`;
 
@@ -801,7 +812,7 @@ export function HeroMeta() {
                       <td>{describeHeroRole(row.hero)}</td>
                       <td>{formatPercent(row.winRate)}</td>
                       <td>{formatPercent(pickRate)}</td>
-                      <td>{formatPercent(row.banRate ?? 0)}</td>
+                      <td>{row.banRate == null ? "—" : formatPercent(row.banRate)}</td>
                       {orderedSelectedMetrics.map((metric) => {
                         const metricKey = metric.key;
                         if (metricKey === "avgKills") {
@@ -875,49 +886,39 @@ type HeroMetaHeroImageProps = {
 };
 
 function HeroMetaHeroImage({ hero }: HeroMetaHeroImageProps) {
-  const sources = useMemoDraft(
-    () => buildHeroAssetCandidatesForMeta(hero),
-    [hero]
+  const sources = useMemo(
+    () => heroPortraitUrlCandidates(hero.name, hero.img, hero.icon),
+    [hero.name, hero.img, hero.icon]
   );
+  const fallbackIdx = useRef(0);
+
+  useEffect(() => {
+    fallbackIdx.current = 0;
+  }, [sources]);
 
   if (sources.length === 0) {
-    return <div className="hero-icon placeholder" aria-hidden="true" />;
+    return (
+      <div className="hero-meta-hero-thumb placeholder" aria-hidden="true" />
+    );
   }
 
   return (
     <img
-      className="hero-icon"
+      key={`${hero.id}-${sources[0]}`}
+      className="hero-meta-hero-thumb"
       src={sources[0]}
       alt={hero.localized_name}
       loading="lazy"
+      decoding="async"
       onError={(e) => {
-        const img = e.currentTarget;
-        const idx = sources.indexOf(img.src);
-        const nextIdx = idx + 1;
-        if (nextIdx < sources.length) {
-          img.src = sources[nextIdx];
+        fallbackIdx.current += 1;
+        const i = fallbackIdx.current;
+        if (i < sources.length) {
+          e.currentTarget.src = sources[i];
         }
       }}
     />
   );
-}
-
-function buildHeroAssetCandidatesForMeta(
-  hero: OpenDotaHeroStats | undefined
-): string[] {
-  if (!hero) return [];
-  const raw = hero.icon || hero.img;
-  if (!raw) return [];
-
-  const path = raw.startsWith("/") ? raw : `/${raw}`;
-  const pathNoQuery = path.split("?")[0];
-
-  return [
-    `https://cdn.cloudflare.steamstatic.com${pathNoQuery}`,
-    `https://api.opendota.com${pathNoQuery}`,
-    `https://steamcdn-a.akamaihd.net${pathNoQuery}`,
-    `https://cdn.cloudflare.steamstatic.com${path}`
-  ];
 }
 
 export default HeroMeta;

@@ -7,8 +7,18 @@ import { BkbDispelGame } from "./BkbDispelGame";
 import { HeroMeta } from "./HeroMeta";
 import { ItemMeta } from "./ItemMeta";
 import { MiniHeroProfiles } from "./MiniHeroProfiles";
+import { CounterpickGame } from "./CounterpickGame";
 
-type AppMode = "draft" | "cm" | "invoker" | "armlet" | "dispel" | "meta" | "items" | "profiles";
+type AppMode =
+  | "draft"
+  | "cm"
+  | "invoker"
+  | "armlet"
+  | "dispel"
+  | "counterpick"
+  | "meta"
+  | "items"
+  | "profiles";
 
 function App() {
   const [mode, setMode] = useState<AppMode>("draft");
@@ -22,6 +32,8 @@ function App() {
         setMode("armlet");
       } else if (path.endsWith("/dispel")) {
         setMode("dispel");
+      } else if (path.endsWith("/counterpick")) {
+        setMode("counterpick");
       } else if (path.endsWith("/meta")) {
         setMode("meta");
       } else if (path.endsWith("/items")) {
@@ -40,6 +52,12 @@ function App() {
     return () => window.removeEventListener("popstate", applyPath);
   }, []);
 
+  useEffect(() => {
+    const plainBg = mode === "draft" || mode === "cm";
+    document.body.classList.toggle("app-plain-page-bg", plainBg);
+    return () => document.body.classList.remove("app-plain-page-bg");
+  }, [mode]);
+
   const navigate = (nextMode: AppMode) => {
     setMode(nextMode);
     const base = window.location.origin;
@@ -50,6 +68,8 @@ function App() {
       nextPath = "/armlet";
     } else if (nextMode === "dispel") {
       nextPath = "/dispel";
+    } else if (nextMode === "counterpick") {
+      nextPath = "/counterpick";
     } else if (nextMode === "meta") {
       nextPath = "/meta";
     } else if (nextMode === "items") {
@@ -67,7 +87,7 @@ function App() {
   const containerClass = "container container-cm";
 
   return (
-    <div className={containerClass}>
+    <>
       <header className="top-nav">
         <button
           className={mode === "draft" ? "top-nav-btn active" : "top-nav-btn"}
@@ -102,7 +122,7 @@ function App() {
         <div className="top-nav-dropdown">
           <button
             className={
-              mode === "invoker" || mode === "armlet" || mode === "dispel"
+              mode === "invoker" || mode === "armlet" || mode === "dispel" || mode === "counterpick"
                 ? "top-nav-btn active"
                 : "top-nav-btn"
             }
@@ -120,19 +140,25 @@ function App() {
             <button className="top-nav-dropdown-item" onClick={() => navigate("dispel")}>
               Dispell
             </button>
+            <button className="top-nav-dropdown-item" onClick={() => navigate("counterpick")}>
+              Dota Matchups
+            </button>
           </div>
         </div>
       </header>
 
-      {mode === "draft" && <Draft />}
-      {mode === "cm" && <CaptainModeDraft />}
-      {mode === "invoker" && <InvokerTrainer onBack={() => navigate("draft")} />}
-      {mode === "armlet" && <ArmletToggle />}
-      {mode === "dispel" && <BkbDispelGame />}
-      {mode === "meta" && <HeroMeta />}
-      {mode === "items" && <ItemMeta />}
-      {mode === "profiles" && <MiniHeroProfiles />}
-    </div>
+      <div className={containerClass}>
+        {mode === "draft" && <Draft />}
+        {mode === "cm" && <CaptainModeDraft />}
+        {mode === "invoker" && <InvokerTrainer onBack={() => navigate("draft")} />}
+        {mode === "armlet" && <ArmletToggle />}
+        {mode === "dispel" && <BkbDispelGame />}
+        {mode === "counterpick" && <CounterpickGame />}
+        {mode === "meta" && <HeroMeta />}
+        {mode === "items" && <ItemMeta />}
+        {mode === "profiles" && <MiniHeroProfiles />}
+      </div>
+    </>
   );
 }
 

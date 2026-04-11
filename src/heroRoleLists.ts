@@ -66,6 +66,7 @@ const MID_NAMES: readonly string[] = [
   "Razor",
   "Sniper",
   "Outworld Devourer",
+  "Outworld Destroyer",
   "Death Prophet",
   "Sand King",
   "Beastmaster",
@@ -173,6 +174,28 @@ export const MID_HERO_NAMES = toLowerSet(MID_NAMES);
 export const OFFLANE_HERO_NAMES = toLowerSet(OFFLANE_NAMES);
 export const SOFT_SUPPORT_HERO_NAMES = toLowerSet(SOFT_SUPPORT_NAMES);
 export const HARD_SUPPORT_HERO_NAMES = toLowerSet(HARD_SUPPORT_NAMES);
+
+/** Позиции как в мини-профиле / драфте; «все» — без фильтра. */
+export type ProfileRoleFilter = "all" | "carry" | "mid" | "offlane" | "softSupport" | "hardSupport";
+
+export function heroMatchesProfileRole(name: string, role: ProfileRoleFilter): boolean {
+  if (role === "all") return true;
+  const key = name.toLowerCase();
+  switch (role) {
+    case "carry":
+      return CARRY_HERO_NAMES.has(key);
+    case "mid":
+      return MID_HERO_NAMES.has(key);
+    case "offlane":
+      return OFFLANE_HERO_NAMES.has(key);
+    case "softSupport":
+      return SOFT_SUPPORT_HERO_NAMES.has(key);
+    case "hardSupport":
+      return HARD_SUPPORT_HERO_NAMES.has(key);
+    default:
+      return true;
+  }
+}
 
 export function draftRoleHeroSetForSlot(slotIndex: number): Set<string> {
   switch (slotIndex) {
