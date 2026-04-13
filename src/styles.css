@@ -24,6 +24,8 @@
 html {
   scrollbar-gutter: stable;
   overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * {
@@ -35,7 +37,10 @@ body {
   margin: 0;
   color: var(--text);
   min-height: 100vh;
-  padding: 24px;
+  min-height: 100dvh;
+  padding: max(24px, env(safe-area-inset-top, 0px))
+    max(24px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px))
+    max(24px, env(safe-area-inset-left, 0px));
   overflow-x: hidden;
   background-color: #070a10;
   background-image:
@@ -56,6 +61,81 @@ body {
   body {
     /* fixed-фон даёт рывки на части мобильных браузеров */
     background-attachment: scroll;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: max(12px, env(safe-area-inset-top, 0px))
+      max(12px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
+  }
+
+  .top-nav {
+    --nav-edge-l: max(12px, env(safe-area-inset-left, 0px));
+    --nav-edge-r: max(12px, env(safe-area-inset-right, 0px));
+    --nav-edge-t: max(12px, env(safe-area-inset-top, 0px));
+    gap: 6px;
+    padding-top: 10px;
+    padding-bottom: 12px;
+  }
+
+  .top-nav-btn {
+    padding: 9px 12px;
+    font-size: 12px;
+  }
+
+  h1 {
+    font-size: 22px;
+  }
+
+  .subtitle {
+    font-size: 14px;
+  }
+
+  .team-select {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .team-select-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .invoker-trainer-header {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+    text-align: center;
+  }
+
+  .invoker-trainer-header > .secondary {
+    justify-self: center;
+  }
+
+  .invoker-trainer-title {
+    grid-column: 1;
+  }
+
+  .invoker-trainer-status {
+    justify-self: center;
+    text-align: center;
+  }
+
+  .invoker-trainer-lane-track {
+    height: min(420px, 48vh);
+  }
+
+  .item-meta-table-wrap,
+  .hero-meta-table-wrap {
+    -webkit-overflow-scrolling: touch;
   }
 }
 
@@ -90,8 +170,11 @@ body.app-plain-page-bg .card {
   max-width: 1320px;
 }
 
-/* На всю ширину окна: выходим из #root с padding у body (не полагаемся на calc от родителя). */
+/* На всю ширину окна: компенсируем padding body (без 100vw — иначе горизонтальный скролл). */
 .top-nav {
+  --nav-edge-l: max(24px, env(safe-area-inset-left, 0px));
+  --nav-edge-r: max(24px, env(safe-area-inset-right, 0px));
+  --nav-edge-t: max(24px, env(safe-area-inset-top, 0px));
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -99,9 +182,10 @@ body.app-plain-page-bg .card {
   gap: 10px;
   margin-bottom: 16px;
   box-sizing: border-box;
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-top: -24px;
+  margin-top: calc(-1 * var(--nav-edge-t));
+  margin-left: calc(-1 * var(--nav-edge-l));
+  margin-right: calc(-1 * var(--nav-edge-r));
+  width: calc(100% + var(--nav-edge-l) + var(--nav-edge-r));
   padding: 12px max(16px, env(safe-area-inset-left, 0px)) 14px
     max(16px, env(safe-area-inset-right, 0px));
   border-radius: 0;
@@ -130,6 +214,7 @@ body.app-plain-page-bg .card {
   font-weight: 600;
   letter-spacing: 0.03em;
   cursor: pointer;
+  touch-action: manipulation;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
   transition:
     background 0.12s ease,
@@ -198,6 +283,13 @@ body.app-plain-page-bg .card {
   visibility: visible;
   transform: translateY(0);
   pointer-events: auto;
+}
+
+/* Мини-игры в навигации только на широких экранах (не телефоны). */
+@media (max-width: 900px) {
+  .top-nav-dropdown {
+    display: none;
+  }
 }
 
 .top-nav-dropdown-item {

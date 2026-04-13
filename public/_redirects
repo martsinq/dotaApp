@@ -1,0 +1,3 @@
+# SPA: вложенные пути отдают index.html (Cloudflare Pages / Netlify-стиль).
+# Статические файлы (sitemap.xml, robots.txt, *.html в корне) имеют приоритет.
+/*    /index.html   200

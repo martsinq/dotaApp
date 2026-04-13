@@ -20,36 +20,70 @@ type AppMode =
   | "items"
   | "profiles";
 
+const MINI_GAME_MODES: readonly AppMode[] = ["invoker", "armlet", "dispel", "counterpick"];
+
+function isNarrowViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
+}
+
+function isMiniGameMode(mode: AppMode): boolean {
+  return (MINI_GAME_MODES as readonly string[]).includes(mode);
+}
+
 function App() {
   const [mode, setMode] = useState<AppMode>("draft");
 
   useEffect(() => {
     const applyPath = () => {
       const path = window.location.pathname.replace(/\/+$/, "");
+      let next: AppMode = "draft";
       if (path.endsWith("/invoker")) {
-        setMode("invoker");
+        next = "invoker";
       } else if (path.endsWith("/armlet")) {
-        setMode("armlet");
+        next = "armlet";
       } else if (path.endsWith("/dispel")) {
-        setMode("dispel");
+        next = "dispel";
       } else if (path.endsWith("/counterpick")) {
-        setMode("counterpick");
+        next = "counterpick";
       } else if (path.endsWith("/meta")) {
-        setMode("meta");
+        next = "meta";
       } else if (path.endsWith("/items")) {
-        setMode("items");
+        next = "items";
       } else if (path.endsWith("/profiles")) {
-        setMode("profiles");
+        next = "profiles";
       } else if (path.endsWith("/cm")) {
-        setMode("cm");
-      } else {
-        setMode("draft");
+        next = "cm";
       }
+
+      if (isNarrowViewport() && isMiniGameMode(next)) {
+        const base = window.location.origin;
+        if (window.location.pathname.replace(/\/+$/, "") !== "/draft") {
+          window.history.replaceState(null, "", `${base}/draft`);
+        }
+        next = "draft";
+      }
+
+      setMode(next);
     };
 
     applyPath();
     window.addEventListener("popstate", applyPath);
     return () => window.removeEventListener("popstate", applyPath);
+  }, []);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 900px)");
+    const onViewportChange = () => {
+      if (!mql.matches) return;
+      setMode((m) => {
+        if (!isMiniGameMode(m)) return m;
+        const base = window.location.origin;
+        window.history.replaceState(null, "", `${base}/draft`);
+        return "draft";
+      });
+    };
+    mql.addEventListener("change", onViewportChange);
+    return () => mql.removeEventListener("change", onViewportChange);
   }, []);
 
   useEffect(() => {
@@ -59,6 +93,9 @@ function App() {
   }, [mode]);
 
   const navigate = (nextMode: AppMode) => {
+    if (isNarrowViewport() && isMiniGameMode(nextMode)) {
+      return;
+    }
     setMode(nextMode);
     const base = window.location.origin;
     let nextPath = "/draft";
@@ -131,16 +168,32 @@ function App() {
             Мини игры
           </button>
           <div className="top-nav-dropdown-menu">
-            <button className="top-nav-dropdown-item" onClick={() => navigate("invoker")}>
+            <button
+              className="top-nav-dropdown-item"
+              type="button"
+              onClick={() => navigate("invoker")}
+            >
               Invoker Trainer
             </button>
-            <button className="top-nav-dropdown-item" onClick={() => navigate("armlet")}>
+            <button
+              className="top-nav-dropdown-item"
+              type="button"
+              onClick={() => navigate("armlet")}
+            >
               Armlet Toggle
             </button>
-            <button className="top-nav-dropdown-item" onClick={() => navigate("dispel")}>
+            <button
+              className="top-nav-dropdown-item"
+              type="button"
+              onClick={() => navigate("dispel")}
+            >
               Dispell
             </button>
-            <button className="top-nav-dropdown-item" onClick={() => navigate("counterpick")}>
+            <button
+              className="top-nav-dropdown-item"
+              type="button"
+              onClick={() => navigate("counterpick")}
+            >
               Dota Matchups
             </button>
           </div>

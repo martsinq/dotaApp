@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# При смене домена замените URL на актуальный.
+Sitemap: https://dotaapp.pages.dev/sitemap.xml
