@@ -183,6 +183,12 @@ export function Draft() {
     };
 
     updateHeight();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateHeight);
+      return () => {
+        window.removeEventListener("resize", updateHeight);
+      };
+    }
     const observer = new ResizeObserver(() => updateHeight());
     observer.observe(el);
     window.addEventListener("resize", updateHeight);
