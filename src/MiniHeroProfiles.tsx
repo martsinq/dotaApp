@@ -464,30 +464,143 @@ function buildRoleBasedFallbackBuild(
   const role = pickPrimaryRoleForFallback(hero);
   const presets: Record<RoleKey, { start: string[]; transition: string[]; late: string[] }> = {
     carry: {
-      start: ["tango", "branches", "magic_wand", "wraith_band", "power_treads"],
-      transition: ["orb_of_corrosion", "dragon_lance", "black_king_bar", "yasha", "manta"],
-      late: ["butterfly", "satanic", "skadi", "swift_blink", "monkey_king_bar", "daedalus"]
+      start: [
+        "tango",
+        "branches",
+        "magic_wand",
+        "wraith_band",
+        "power_treads",
+        "phase_boots",
+        "falcon_blade"
+      ],
+      transition: [
+        "orb_of_corrosion",
+        "dragon_lance",
+        "black_king_bar",
+        "yasha",
+        "manta",
+        "maelstrom",
+        "diffusal_blade",
+        "desolator",
+        "echo_sabre"
+      ],
+      late: [
+        "butterfly",
+        "satanic",
+        "skadi",
+        "swift_blink",
+        "monkey_king_bar",
+        "daedalus",
+        "nullifier",
+        "abyssal_blade"
+      ]
     },
     mid: {
-      start: ["tango", "bottle", "magic_wand", "null_talisman", "power_treads"],
-      transition: ["witch_blade", "blink", "black_king_bar", "kaya", "kaya_and_sange"],
-      late: ["octarine_core", "wind_waker", "scythe", "shivas_guard", "aeon_disk", "aghanims_scepter"]
+      start: ["tango", "bottle", "magic_wand", "null_talisman", "power_treads", "phase_boots"],
+      transition: [
+        "witch_blade",
+        "blink",
+        "black_king_bar",
+        "kaya",
+        "kaya_and_sange",
+        "orchid",
+        "travel_boots",
+        "veil_of_discord"
+      ],
+      late: [
+        "octarine_core",
+        "wind_waker",
+        "scythe",
+        "shivas_guard",
+        "aeon_disk",
+        "aghanims_scepter",
+        "sphere",
+        "refresher"
+      ]
     },
     offlane: {
-      start: ["tango", "magic_wand", "bracer", "phase_boots", "soul_ring"],
-      transition: ["blink", "blade_mail", "pipe", "crimson_guard", "lotus_orb"],
-      late: ["shivas_guard", "overwhelming_blink", "heart", "assault", "refresher", "aghanims_scepter"]
+      start: ["tango", "magic_wand", "bracer", "phase_boots", "soul_ring", "arcane_boots"],
+      transition: [
+        "blink",
+        "blade_mail",
+        "pipe",
+        "crimson_guard",
+        "lotus_orb",
+        "vanguard",
+        "eternal_shroud"
+      ],
+      late: [
+        "shivas_guard",
+        "overwhelming_blink",
+        "heart",
+        "assault",
+        "refresher",
+        "aghanims_scepter",
+        "sphere"
+      ]
     },
     softSupport: {
-      start: ["tango", "magic_wand", "arcane_boots", "urn_of_shadows", "wind_lace"],
-      transition: ["spirit_vessel", "force_staff", "glimmer_cape", "aether_lens", "blink"],
-      late: ["aghanims_shard", "aghanims_scepter", "octarine_core", "wind_waker", "scythe", "aeon_disk"]
+      start: ["tango", "magic_wand", "arcane_boots", "urn_of_shadows", "wind_lace", "tranquil_boots"],
+      transition: [
+        "spirit_vessel",
+        "force_staff",
+        "glimmer_cape",
+        "aether_lens",
+        "blink",
+        "drum",
+        "pavise"
+      ],
+      late: [
+        "aghanims_shard",
+        "aghanims_scepter",
+        "octarine_core",
+        "wind_waker",
+        "scythe",
+        "aeon_disk",
+        "lotus_orb"
+      ]
     },
     hardSupport: {
-      start: ["tango", "magic_wand", "arcane_boots", "wind_lace", "tranquil_boots"],
-      transition: ["force_staff", "glimmer_cape", "mekansm", "guardian_greaves", "aether_lens"],
-      late: ["lotus_orb", "shivas_guard", "wind_waker", "scythe", "aghanims_scepter", "aeon_disk"]
+      start: ["tango", "magic_wand", "arcane_boots", "wind_lace", "tranquil_boots", "bracer"],
+      transition: [
+        "force_staff",
+        "glimmer_cape",
+        "mekansm",
+        "guardian_greaves",
+        "aether_lens",
+        "pavise",
+        "solar_crest"
+      ],
+      late: [
+        "lotus_orb",
+        "shivas_guard",
+        "wind_waker",
+        "scythe",
+        "aghanims_scepter",
+        "aeon_disk",
+        "octarine_core"
+      ]
     }
+  };
+
+  const seedBase = Math.abs(
+    (hero.id * 131 + (hero.localized_name ?? "").length * 17 + (hero.name ?? "").length * 7) | 0
+  );
+
+  const pickUnique = (pool: string[], size: number, seedOffset: number): string[] => {
+    if (pool.length <= size) return [...pool];
+    const used = new Set<number>();
+    const out: string[] = [];
+    let i = 0;
+    while (out.length < size && i < pool.length * 3) {
+      const idx = (seedBase + seedOffset + i * 11) % pool.length;
+      if (!used.has(idx)) {
+        used.add(idx);
+        out.push(pool[idx]);
+      }
+      i += 1;
+    }
+    return out;
   };
 
   const toSlots = (keys: string[], startPurchases: number): PopularBuildSlot[] => {
@@ -508,10 +621,13 @@ function buildRoleBasedFallbackBuild(
   };
 
   const preset = presets[role];
+  const startKeys = pickUnique(preset.start, 5, 3);
+  const transitionKeys = pickUnique(preset.transition, 5, 17);
+  const lateKeys = pickUnique(preset.late, 5, 29);
   return {
-    start: toSlots(preset.start, 100),
-    transition: toSlots(preset.transition, 85),
-    late: toSlots(preset.late, 70)
+    start: toSlots(startKeys, 100),
+    transition: toSlots(transitionKeys, 85),
+    late: toSlots(lateKeys, 70)
   };
 }
 
