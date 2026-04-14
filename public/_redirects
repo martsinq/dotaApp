@@ -2,8 +2,4 @@
 # Статические файлы (sitemap.xml, robots.txt, *.html в корне) имеют приоритет.
 # Fallback for stale cached HTML that still requests /src/main.tsx.
 /src/main.tsx  /assets/app.js  200
-# Остальные /src/* должны давать 404 (чтобы не переписывались в HTML).
-/src/*         /src/:splat     404
-# Ассеты отдаются как есть; не переписывать в index.html.
-/assets/*      /assets/:splat  404
 /*    /index.html   200
