@@ -1,7 +1,6 @@
 const WORKER_API_BASE = "https://odota-proxy.nekit03102003.workers.dev/api/od";
 const API_BASE = "/api/od";
 const PAGES_API_BASE = "https://dotaapp.pages.dev/api/od";
-const DIRECT_API_BASE = "https://api.opendota.com/api";
 const HEROES_STATIC_FALLBACK_URL =
   "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
 
@@ -35,31 +34,6 @@ type OpenDotaHeroBasic = {
   img?: string;
   icon?: string;
 };
-
-async function fetchHeroesBasicDirect(): Promise<OpenDotaHeroBasic[]> {
-  const url = "https://api.opendota.com/api/heroes";
-  const maxAttempts = 2;
-  let lastError = new Error("OpenDota /heroes request failed");
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      return (await res.json()) as OpenDotaHeroBasic[];
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error("Unknown /heroes error");
-      if (attempt < maxAttempts) {
-        await new Promise((resolve) => window.setTimeout(resolve, 450 * attempt));
-      }
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
-  }
-  throw lastError;
-}
 
 async function fetchHeroesBasicStaticFallback(): Promise<OpenDotaHeroBasic[]> {
   const controller = new AbortController();
@@ -173,6 +147,9 @@ const CACHE_VERSION = 2;
 /** Параллельные вызовы fetchHeroMatchupsLargeSampleCached для одного hero_id — один сетевой запрос. */
 const inFlightHeroMatchupsLarge = new Map<number, Promise<OpenDotaHeroMatchup[]>>();
 
+/** Несколько экранов дергают heroStats при монтировании — один полёт до сети и localStorage. */
+let inFlightHeroStats: Promise<OpenDotaHeroStats[]> | null = null;
+
 function cacheKey(key: string): string {
   return `opendota:${CACHE_VERSION}:${key}`;
 }
@@ -237,7 +214,8 @@ async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<
   const maxAttempts = opts.maxAttempts ?? 2;
   const retryBackoffMs = opts.retryBackoffMs ?? 450;
   let lastError: Error | null = null;
-  const bases = [API_BASE, WORKER_API_BASE, PAGES_API_BASE, DIRECT_API_BASE];
+  /** Только прокси (тот же хост → workers.dev → pages.dev). Прямой api.opendota.com не используем — единая политика кэша/429 на worker. */
+  const bases = [API_BASE, WORKER_API_BASE, PAGES_API_BASE];
 
   for (const base of bases) {
     const url = `${base}${path}`;
@@ -365,61 +343,64 @@ function parseItemConstantsBundle(data: Record<string, unknown>): {
 export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
   const cached = getCached<OpenDotaHeroStats[]>("heroStats", 1000 * 60 * 60 * 24); // 24h
   if (cached) return cached;
-  try {
-    const data = await fetchJson<OpenDotaHeroStats[]>("/heroStats");
-    setCached("heroStats", data);
-    return data;
-  } catch (err) {
-    const stale = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
-    if (stale && stale.length > 0) return stale;
-    // Rate-limit fallback: lightweight endpoint without bracket stats.
-    // Keeps app functional (draft/search/navigation), while advanced percentages degrade gracefully.
-    let basics: OpenDotaHeroBasic[] = [];
+  if (inFlightHeroStats) return inFlightHeroStats;
+
+  inFlightHeroStats = (async (): Promise<OpenDotaHeroStats[]> => {
     try {
-      basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
-        timeoutMs: 10000,
-        maxAttempts: 2
-      });
-    } catch {
-      // Final fallback when Worker route is not ready or returns upstream_429.
       try {
-        basics = await fetchHeroesBasicDirect();
-      } catch {
-        basics = await fetchHeroesBasicStaticFallback();
+        const data = await fetchJson<OpenDotaHeroStats[]>("/heroStats");
+        setCached("heroStats", data);
+        return data;
+      } catch (err) {
+        const stale = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
+        if (stale && stale.length > 0) return stale;
+        let basics: OpenDotaHeroBasic[] = [];
+        try {
+          basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
+            timeoutMs: 10000,
+            maxAttempts: 2
+          });
+        } catch {
+          basics = await fetchHeroesBasicStaticFallback();
+        }
+        const normalized: OpenDotaHeroStats[] = basics.map((h) => ({
+          id: h.id,
+          name: h.name,
+          localized_name: h.localized_name,
+          primary_attr: h.primary_attr,
+          attack_type: h.attack_type,
+          roles: Array.isArray(h.roles) ? h.roles : [],
+          img: h.img,
+          icon: h.icon,
+          "1_pick": 0,
+          "1_win": 0,
+          "2_pick": 0,
+          "2_win": 0,
+          "3_pick": 0,
+          "3_win": 0,
+          "4_pick": 0,
+          "4_win": 0,
+          "5_pick": 0,
+          "5_win": 0,
+          "6_pick": 0,
+          "6_win": 0,
+          "7_pick": 0,
+          "7_win": 0,
+          "8_pick": 0,
+          "8_win": 0
+        }));
+        if (normalized.length > 0) {
+          setCached("heroStats", normalized);
+          return normalized;
+        }
+        throw err;
       }
+    } finally {
+      inFlightHeroStats = null;
     }
-    const normalized: OpenDotaHeroStats[] = basics.map((h) => ({
-      id: h.id,
-      name: h.name,
-      localized_name: h.localized_name,
-      primary_attr: h.primary_attr,
-      attack_type: h.attack_type,
-      roles: Array.isArray(h.roles) ? h.roles : [],
-      img: h.img,
-      icon: h.icon,
-      "1_pick": 0,
-      "1_win": 0,
-      "2_pick": 0,
-      "2_win": 0,
-      "3_pick": 0,
-      "3_win": 0,
-      "4_pick": 0,
-      "4_win": 0,
-      "5_pick": 0,
-      "5_win": 0,
-      "6_pick": 0,
-      "6_win": 0,
-      "7_pick": 0,
-      "7_win": 0,
-      "8_pick": 0,
-      "8_win": 0
-    }));
-    if (normalized.length > 0) {
-      setCached("heroStats", normalized);
-      return normalized;
-    }
-    throw err;
-  }
+  })();
+
+  return inFlightHeroStats;
 }
 
 export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<OpenDotaHeroAvgKills[]> {

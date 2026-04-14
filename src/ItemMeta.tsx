@@ -122,19 +122,26 @@ export function ItemMeta() {
           setIsLoading(true);
         }
         setError(null);
-        const [statsRes, constantsRes] = await Promise.allSettled([
-          fetchItemMetaStatsCached(),
-          fetchItemConstantsCached()
-        ]);
+        let constantsLoadFailed = false;
+        let constants: Record<string, OpenDotaItemConstant>;
+        try {
+          constants = await fetchItemConstantsCached();
+        } catch {
+          constantsLoadFailed = true;
+          constants = cachedConstants ?? {};
+        }
+        let stats: OpenDotaItemMetaStatRow[] = [];
+        try {
+          stats = await fetchItemMetaStatsCached();
+        } catch {
+          stats = [];
+        }
         if (cancelled) return;
-        const stats = statsRes.status === "fulfilled" ? statsRes.value : [];
-        const constants =
-          constantsRes.status === "fulfilled" ? constantsRes.value : (cachedConstants ?? {});
 
         setRows(buildItemMetaRows(stats, constants));
         if (stats.length === 0) {
           setError("Не удалось загрузить данные предметов из OpenDota.");
-        } else if (constantsRes.status !== "fulfilled") {
+        } else if (constantsLoadFailed) {
           setError("Справочник предметов загружен частично. Часть названий может быть без иконок.");
         }
       } catch (e) {

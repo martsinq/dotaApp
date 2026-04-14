@@ -1,6 +1,7 @@
 const UPSTREAM_BASE = "https://api.opendota.com/api";
 const HEROES_STATIC_FALLBACK_URL =
   "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
+/** Опционально в Dashboard → Settings → Variables: OPENDOTA_API_KEY — снижает 429 при лимитах OpenDota. */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS",
@@ -132,6 +133,30 @@ function fallbackHeroStatsResponse(policy, payload, cacheStatus) {
   return withCacheHeaders(fallbackResp, policy.ttl, policy.staleSeconds, cacheStatus);
 }
 
+function upstreamUrlWithKey(pathAndQuery, env) {
+  const raw = `${UPSTREAM_BASE}${pathAndQuery}`;
+  if (!env?.OPENDOTA_API_KEY) return raw;
+  const sep = raw.includes("?") ? "&" : "?";
+  return `${raw}${sep}api_key=${encodeURIComponent(env.OPENDOTA_API_KEY)}`;
+}
+
+/** Пустой200 вместо 503: клиент не «висит» на ошибке, кэш/UI обрабатывают пустые rows. */
+function fallbackOkJson(policy, body, cacheStatus, ttlCapSeconds) {
+  const ttl = ttlCapSeconds != null ? Math.min(policy.ttl, ttlCapSeconds) : policy.ttl;
+  const fallbackResp = new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" }
+  });
+  return withCacheHeaders(fallbackResp, ttl, policy.staleSeconds, cacheStatus);
+}
+
+function shouldEmptyFallbackOnRateLimit(pathname) {
+  if (pathname === "/api/od/scenarios/itemTimings") return { body: [] };
+  if (/^\/api\/od\/heroes\/\d+\/matchups$/.test(pathname)) return { body: [] };
+  if (/^\/api\/od\/explorer/.test(pathname)) return { body: { rows: [] } };
+  return null;
+}
+
 async function readCached(cache, keyRequest) {
   return cache.match(keyRequest);
 }
@@ -159,8 +184,7 @@ export default {
     const policy = policyForPath(url.pathname);
 
     const upstreamPath = url.pathname.replace(/^\/api\/od/, "");
-    const upstreamUrl = `${UPSTREAM_BASE}${upstreamPath}`;
-    const upstreamWithQuery = `${upstreamUrl}${url.search}`;
+    const upstreamWithQuery = upstreamUrlWithKey(`${upstreamPath}${url.search}`, env);
     const cache = caches.default;
     const cacheKey = new Request(upstreamWithQuery, { method: "GET" });
 
@@ -189,6 +213,11 @@ export default {
           return proxiedFallback;
         }
 
+        const emptyFb = shouldEmptyFallbackOnRateLimit(url.pathname);
+        if (emptyFb) {
+          return fallbackOkJson(policy, emptyFb.body, "FALLBACK_EMPTY", 120);
+        }
+
         return json(`upstream_${upstreamResp.status}`, 503);
       }
 
@@ -203,6 +232,10 @@ export default {
       if (url.pathname === "/api/od/heroStats") {
         const payload = await fetchHeroStatsFallbackPayload();
         return fallbackHeroStatsResponse(policy, payload, "FALLBACK");
+      }
+      const emptyFb = shouldEmptyFallbackOnRateLimit(url.pathname);
+      if (emptyFb) {
+        return fallbackOkJson(policy, emptyFb.body, "FALLBACK_EMPTY", 120);
       }
       return json("upstream_unavailable", 503);
     }

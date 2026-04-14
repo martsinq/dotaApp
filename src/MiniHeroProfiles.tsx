@@ -10,6 +10,7 @@ import {
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
   fetchItemConstantsBundleCached,
+  peekCachedHeroStatsAnyAge,
   peekCachedItemConstantsAnyAge,
   peekCachedMatchupsLargeAnyAge,
   prefetchHeroMatchupsLargeSample,
@@ -588,10 +589,22 @@ export function MiniHeroProfiles() {
   }, [activeHeroId]);
 
   useEffect(() => {
+    const staleList = peekCachedHeroStatsAnyAge();
+    if (staleList && staleList.length > 0) {
+      setAllHeroes(
+        [...staleList]
+          .filter((h) => Boolean(h.localized_name))
+          .sort((a, b) => a.localized_name.localeCompare(b.localized_name))
+      );
+      setIsLoadingList(false);
+    }
+
     let cancelled = false;
     (async () => {
       try {
-        setIsLoadingList(true);
+        if (!staleList || staleList.length === 0) {
+          setIsLoadingList(true);
+        }
         const heroStats = await fetchHeroStatsCached();
         if (cancelled) return;
         setAllHeroes(
@@ -694,12 +707,6 @@ export function MiniHeroProfiles() {
         selectedHero["8_pick"];
       const pickRate = totalGames > 0 ? (heroGames * 10 * 100) / totalGames : 0;
 
-      const pKda = fetchHeroAvgKdaCached();
-      const pCore = fetchHeroAvgCoreStatsCached();
-      const pPop = fetchHeroItemPopularityCached(selectedHero.id);
-      const pBundle = fetchItemConstantsBundleCached();
-      const pTimings = fetchItemTimingsCached();
-      const pPurchase = fetchHeroItemPurchaseOrderCached(selectedHero.id);
       setHero(selectedHero);
       setStats({
         winRate: pubWinRatePercent(selectedHero),
@@ -715,18 +722,28 @@ export function MiniHeroProfiles() {
       });
       setIsLoadingProfile(false);
 
-      void Promise.all([pKda, pCore])
-        .then(([avgKdaRows, avgCoreRows]) => {
+      void (async () => {
+        try {
+          const avgKdaRows = await fetchHeroAvgKdaCached();
           if (cancelled) return;
           const heroKda = avgKdaRows.find((r) => r.hero_id === selectedHero.id) ?? null;
-          const heroCore = avgCoreRows.find((r) => r.hero_id === selectedHero.id) ?? null;
           setStats((prev) =>
             prev
               ? {
                   ...prev,
                   avgKills: heroKda?.avg_kills ?? null,
                   avgDeaths: heroKda?.avg_deaths ?? null,
-                  avgAssists: heroKda?.avg_assists ?? null,
+                  avgAssists: heroKda?.avg_assists ?? null
+                }
+              : prev
+          );
+          const avgCoreRows = await fetchHeroAvgCoreStatsCached();
+          if (cancelled) return;
+          const heroCore = avgCoreRows.find((r) => r.hero_id === selectedHero.id) ?? null;
+          setStats((prev) =>
+            prev
+              ? {
+                  ...prev,
                   avgHeroDamage: heroCore?.avg_hero_damage ?? null,
                   avgHeroHealing: heroCore?.avg_hero_healing ?? null,
                   avgGpm: heroCore?.avg_gold_per_min ?? null,
@@ -735,8 +752,10 @@ export function MiniHeroProfiles() {
                 }
               : prev
           );
-        })
-        .catch(() => {});
+        } catch {
+          // пустые avg* остаются — не блокируем карточку
+        }
+      })();
 
       const applyItemBuild = (
         pop: OpenDotaHeroItemPopularity | null,
@@ -799,24 +818,23 @@ export function MiniHeroProfiles() {
         }
       };
 
-      void Promise.allSettled([pPop, pBundle]).then(([popRes, bundleRes]) => {
+      void (async () => {
+        const [popRes, bundleRes, timingsRes] = await Promise.allSettled([
+          fetchHeroItemPopularityCached(selectedHero.id),
+          fetchItemConstantsBundleCached(),
+          fetchItemTimingsCached()
+        ]);
         if (cancelled) return;
         const pop = popRes.status === "fulfilled" ? popRes.value : null;
         const bundle = bundleRes.status === "fulfilled" ? bundleRes.value : null;
-        applyItemBuild(pop, bundle, [], []);
+        const timings = timingsRes.status === "fulfilled" ? timingsRes.value : [];
+        applyItemBuild(pop, bundle, timings, []);
         setIsLoadingPopularBuild(false);
-      });
 
-      void Promise.allSettled([pPop, pBundle, pTimings, pPurchase]).then(
-        ([popRes, bundleRes, timingsRes, purchaseRes]) => {
-          if (cancelled) return;
-          const pop = popRes.status === "fulfilled" ? popRes.value : null;
-          const bundle = bundleRes.status === "fulfilled" ? bundleRes.value : null;
-          const timings = timingsRes.status === "fulfilled" ? timingsRes.value : [];
-          const purchaseOrder = purchaseRes.status === "fulfilled" ? purchaseRes.value : [];
-          applyItemBuild(pop, bundle, timings, purchaseOrder);
-        }
-      );
+        const purchaseOrder = await fetchHeroItemPurchaseOrderCached(selectedHero.id);
+        if (cancelled) return;
+        applyItemBuild(pop, bundle, timings, purchaseOrder);
+      })();
 
       const commitMatchups = (matchups: OpenDotaHeroMatchup[]) => {
         if (cancelled) return;
@@ -870,7 +888,10 @@ export function MiniHeroProfiles() {
         }
 
         const pRest = fetchHeroMatchupsCached(selectedHero.id);
-        const pLarge = fetchHeroMatchupsLargeSampleCached(selectedHero.id);
+        const pLarge = (async () => {
+          await new Promise((r) => window.setTimeout(r, 650));
+          return fetchHeroMatchupsLargeSampleCached(selectedHero.id);
+        })();
 
         let largeCommitted = false;
         let restCommitted = false;

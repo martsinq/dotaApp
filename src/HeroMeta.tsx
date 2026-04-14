@@ -412,10 +412,8 @@ export function HeroMeta() {
     (async () => {
       try {
         setIsLoadingAdvanced(true);
-        const [avgKdaRows, avgCoreRows] = await Promise.all([
-          fetchHeroAvgKdaCached(),
-          fetchHeroAvgCoreStatsCached()
-        ]);
+        const avgKdaRows = await fetchHeroAvgKdaCached();
+        const avgCoreRows = await fetchHeroAvgCoreStatsCached();
         if (cancelled) return;
 
         const avgKdaByHero = new Map<number, { kills: number; deaths: number; assists: number }>(

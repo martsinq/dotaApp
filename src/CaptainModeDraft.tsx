@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchHeroStatsCached, pubWinRatePercent, type OpenDotaHeroStats } from "./opendota";
+import {
+  fetchHeroStatsCached,
+  peekCachedHeroStatsAnyAge,
+  pubWinRatePercent,
+  type OpenDotaHeroStats
+} from "./opendota";
 import {
   CM_FINAL_BAN_PHASE_FIRST_INDEX,
   CM_LAST_TWO_BANS_FIRST_INDEX,
@@ -160,10 +165,32 @@ export function CaptainModeDraft() {
   };
 
   useEffect(() => {
+    const stale = peekCachedHeroStatsAnyAge();
+    if (stale && stale.length > 0) {
+      const byName: Record<string, OpenDotaHeroStats> = {};
+      for (const h of stale) {
+        byName[h.localized_name] = h;
+      }
+      const names = stale
+        .map((h) => h.localized_name)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      const wr: Record<string, number> = {};
+      for (const name of names) {
+        wr[name] = pubWinRatePercent(byName[name]!);
+      }
+      setHeroByName(byName);
+      setHeroes(names);
+      setBaseWinRate(wr);
+      setIsLoadingData(false);
+    }
+
     let cancelled = false;
     (async () => {
       try {
-        setIsLoadingData(true);
+        if (!stale || stale.length === 0) {
+          setIsLoadingData(true);
+        }
         setError(null);
         const heroStats = await fetchHeroStatsCached();
         if (cancelled) return;

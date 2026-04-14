@@ -4,6 +4,7 @@ import {
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
   heroPortraitUrlCandidates,
+  peekCachedHeroStatsAnyAge,
   pubWinRatePercent,
   type OpenDotaHeroMatchup,
   type OpenDotaHeroStats
@@ -128,10 +129,32 @@ export function Draft() {
   const [autoSuggest, setAutoSuggest] = useState(true);
 
   useEffect(() => {
+    const stale = peekCachedHeroStatsAnyAge();
+    if (stale && stale.length > 0) {
+      const byName: Record<string, OpenDotaHeroStats> = {};
+      for (const h of stale) {
+        byName[h.localized_name] = h;
+      }
+      const names = stale
+        .map((h) => h.localized_name)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      const baseWinRate: Record<string, number> = {};
+      for (const name of names) {
+        baseWinRate[name] = pubWinRatePercent(byName[name]!);
+      }
+      setHeroByName(byName);
+      setHeroes(names);
+      setStats({ baseWinRate, counterVs: {} });
+      setIsLoadingData(false);
+    }
+
     let cancelled = false;
     (async () => {
       try {
-        setIsLoadingData(true);
+        if (!stale || stale.length === 0) {
+          setIsLoadingData(true);
+        }
         setError(null);
         const heroStats = await fetchHeroStatsCached();
         if (cancelled) return;
