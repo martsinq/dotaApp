@@ -1,4 +1,9 @@
 const UPSTREAM_BASE = "https://api.opendota.com/api";
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS",
+  "Access-Control-Allow-Headers": "*"
+};
 
 function policyForPath(pathname) {
   if (/^\/api\/od\/heroStats$/.test(pathname)) {
@@ -29,14 +34,28 @@ function policyForPath(pathname) {
 function json(message, status) {
   return new Response(JSON.stringify({ error: message }), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" }
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...CORS_HEADERS
+    }
   });
+}
+
+function withCors(resp) {
+  const headers = new Headers(resp.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    headers.set(k, v);
+  }
+  return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
 }
 
 function withCacheHeaders(resp, ttl, staleSeconds, cacheStatus) {
   const headers = new Headers(resp.headers);
   headers.set("Cache-Control", `public, max-age=${ttl}, stale-while-revalidate=${staleSeconds}`);
   headers.set("X-Odota-Proxy-Cache", cacheStatus);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    headers.set(k, v);
+  }
   return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
 }
 
@@ -89,6 +108,12 @@ async function fetchWithTimeout(url, timeoutMs) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return json("method_not_allowed", 405);
+    }
     if (!url.pathname.startsWith("/api/od/")) return json("not_found", 404);
     const policy = policyForPath(url.pathname);
 
@@ -145,11 +170,11 @@ export default {
         return json(`upstream_${upstreamResp.status}`, 503);
       }
 
-      return new Response(upstreamResp.body, {
+      return withCors(new Response(upstreamResp.body, {
         status: upstreamResp.status,
         statusText: upstreamResp.statusText,
         headers: upstreamResp.headers
-      });
+      }));
     } catch {
       const stale = await readCached(cache, cacheKey);
       if (stale) return withCacheHeaders(stale, policy.ttl, policy.staleSeconds, "STALE");
