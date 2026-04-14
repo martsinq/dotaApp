@@ -1,6 +1,8 @@
 const API_BASE = "https://dotaapp.pages.dev/api/od";
 const WORKER_API_BASE = "https://odota-proxy.nekit03102003.workers.dev/api/od";
 const DIRECT_API_BASE = "https://api.opendota.com/api";
+const HEROES_STATIC_FALLBACK_URL =
+  "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
 
 export type OpenDotaHeroStats = {
   id: number;
@@ -56,6 +58,47 @@ async function fetchHeroesBasicDirect(): Promise<OpenDotaHeroBasic[]> {
     }
   }
   throw lastError;
+}
+
+async function fetchHeroesBasicStaticFallback(): Promise<OpenDotaHeroBasic[]> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await fetch(HEROES_STATIC_FALLBACK_URL, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const raw = (await res.json()) as Record<string, unknown>;
+    const out: OpenDotaHeroBasic[] = [];
+    for (const row of Object.values(raw)) {
+      if (!row || typeof row !== "object") continue;
+      const hero = row as Record<string, unknown>;
+      const id = Number(hero.id);
+      const localized_name =
+        typeof hero.localized_name === "string" ? hero.localized_name : "";
+      const name = typeof hero.name === "string" ? hero.name : "";
+      if (!Number.isFinite(id) || id <= 0 || !localized_name || !name) continue;
+      out.push({
+        id,
+        name,
+        localized_name,
+        primary_attr:
+          hero.primary_attr === "str" ||
+          hero.primary_attr === "agi" ||
+          hero.primary_attr === "int" ||
+          hero.primary_attr === "all"
+            ? hero.primary_attr
+            : "all",
+        attack_type: hero.attack_type === "Ranged" ? "Ranged" : "Melee",
+        roles: Array.isArray(hero.roles)
+          ? hero.roles.filter((r): r is string => typeof r === "string")
+          : []
+      });
+    }
+    return out;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 export type OpenDotaHeroMatchup = {
@@ -337,7 +380,11 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
       });
     } catch {
       // Final fallback when Worker route is not ready or returns upstream_429.
-      basics = await fetchHeroesBasicDirect();
+      try {
+        basics = await fetchHeroesBasicDirect();
+      } catch {
+        basics = await fetchHeroesBasicStaticFallback();
+      }
     }
     const normalized: OpenDotaHeroStats[] = basics.map((h) => ({
       id: h.id,
