@@ -10,6 +10,7 @@ import {
   fetchHeroMatchupsWithFallback,
   fetchHeroStatsCached,
   fetchItemConstantsBundleCached,
+  peekCachedItemConstantsAnyAge,
   peekCachedMatchupsLargeAnyAge,
   prefetchHeroMatchupsLargeSample,
   heroPortraitUrlCandidates,
@@ -28,9 +29,6 @@ import {
   OFFLANE_HERO_NAMES,
   SOFT_SUPPORT_HERO_NAMES
 } from "./heroRoleLists";
-
-/** Показывать матчап в блоках контрпиков только при таком минимуме игр по паре */
-const MIN_MATCHUP_GAMES_MINI_PROFILE = 50;
 
 type HeroProfileStats = {
   winRate: number;
@@ -70,6 +68,7 @@ function emptyRoleMatchupBuckets(): RoleMatchupBuckets {
 }
 
 const MATCHUP_TOP_N = 5;
+const MATCHUP_MIN_GAMES_FALLBACK_STEPS = [50, 30, 20, 10];
 
 /**
  * WR в строке — винрейт выбранного героя против этого соперника.
@@ -79,10 +78,9 @@ function pickCountersAndFavorable(rows: HeroMatchupView[], k: number): {
   counters: HeroMatchupView[];
   favorable: HeroMatchupView[];
 } {
-  const eligible = rows.filter((r) => r.gamesPlayed >= MIN_MATCHUP_GAMES_MINI_PROFILE);
-  if (eligible.length === 0) return { counters: [], favorable: [] };
+  if (rows.length === 0) return { counters: [], favorable: [] };
 
-  const byWrAsc = [...eligible].sort((a, b) => {
+  const byWrAsc = [...rows].sort((a, b) => {
     const d = a.heroWinRateVs - b.heroWinRateVs;
     if (Math.abs(d) > 0.001) return d;
     return b.gamesPlayed - a.gamesPlayed;
@@ -90,7 +88,7 @@ function pickCountersAndFavorable(rows: HeroMatchupView[], k: number): {
   const counters = byWrAsc.slice(0, k);
   const counterIds = new Set(counters.map((c) => c.heroId));
 
-  const byWrDesc = [...eligible].sort((a, b) => {
+  const byWrDesc = [...rows].sort((a, b) => {
     const d = b.heroWinRateVs - a.heroWinRateVs;
     if (Math.abs(d) > 0.001) return d;
     return b.gamesPlayed - a.gamesPlayed;
@@ -109,6 +107,14 @@ function pickCountersAndFavorable(rows: HeroMatchupView[], k: number): {
   }
 
   return { counters, favorable };
+}
+
+function selectMatchupSourceRows(rows: HeroMatchupView[]): HeroMatchupView[] {
+  for (const minGames of MATCHUP_MIN_GAMES_FALLBACK_STEPS) {
+    const filtered = rows.filter((m) => m.gamesPlayed >= minGames);
+    if (filtered.length > 0) return filtered;
+  }
+  return rows.filter((m) => m.gamesPlayed > 0);
 }
 
 type PopularBuildSlot = {
@@ -653,14 +659,25 @@ export function MiniHeroProfiles() {
         purchaseOrder: OpenDotaHeroItemPurchaseOrderRow[]
       ) => {
         if (cancelled) return;
-        if (!pop || !bundle) {
+        if (!pop) {
           setLateItems([]);
           setStartItems([]);
           setTransitionItems([]);
           return;
         }
         try {
-          const idMap = itemIdMapFromConstants(bundle.constants);
+          const cachedConstants = peekCachedItemConstantsAnyAge();
+          const effectiveConstants =
+            bundle?.constants ??
+            (cachedConstants && Object.keys(cachedConstants).length > 0 ? cachedConstants : null);
+          if (!effectiveConstants) {
+            setLateItems([]);
+            setStartItems([]);
+            setTransitionItems([]);
+            return;
+          }
+          const idMap = itemIdMapFromConstants(effectiveConstants);
+          const usedAsComponent = bundle?.usedAsComponentKeys ?? new Set<string>();
           const explorerTiming = buildAvgItemTimingByKeyFromPurchaseOrder(purchaseOrder);
           const scenarioTiming = buildAvgItemTimingByKeyForHero(selectedHero.id, timings);
           const avgTimingByItemKey = explorerTiming.size > 0 ? explorerTiming : scenarioTiming;
@@ -668,7 +685,7 @@ export function MiniHeroProfiles() {
             pop,
             idMap,
             6,
-            bundle.usedAsComponentKeys,
+            usedAsComponent,
             avgTimingByItemKey
           );
           const nextStart = topPopularItemsForPhase(pop.start_game_items, idMap, 6, {
@@ -689,29 +706,24 @@ export function MiniHeroProfiles() {
         }
       };
 
-      void Promise.all([pPop, pBundle])
-        .then(([pop, bundle]) => {
-          if (cancelled) return;
-          applyItemBuild(pop, bundle, [], []);
-          setIsLoadingPopularBuild(false);
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setLateItems([]);
-            setStartItems([]);
-            setTransitionItems([]);
-            setIsLoadingPopularBuild(false);
-          }
-        });
+      void Promise.allSettled([pPop, pBundle]).then(([popRes, bundleRes]) => {
+        if (cancelled) return;
+        const pop = popRes.status === "fulfilled" ? popRes.value : null;
+        const bundle = bundleRes.status === "fulfilled" ? bundleRes.value : null;
+        applyItemBuild(pop, bundle, [], []);
+        setIsLoadingPopularBuild(false);
+      });
 
-      void Promise.all([pPop, pBundle, pTimings, pPurchase])
-        .then(([pop, bundle, timings, purchaseOrder]) => {
+      void Promise.allSettled([pPop, pBundle, pTimings, pPurchase]).then(
+        ([popRes, bundleRes, timingsRes, purchaseRes]) => {
           if (cancelled) return;
-          if (pop && bundle) {
-            applyItemBuild(pop, bundle, timings, purchaseOrder);
-          }
-        })
-        .catch(() => {});
+          const pop = popRes.status === "fulfilled" ? popRes.value : null;
+          const bundle = bundleRes.status === "fulfilled" ? bundleRes.value : null;
+          const timings = timingsRes.status === "fulfilled" ? timingsRes.value : [];
+          const purchaseOrder = purchaseRes.status === "fulfilled" ? purchaseRes.value : [];
+          applyItemBuild(pop, bundle, timings, purchaseOrder);
+        }
+      );
 
       const commitMatchups = (matchups: OpenDotaHeroMatchup[]) => {
         if (cancelled) return;
@@ -725,7 +737,7 @@ export function MiniHeroProfiles() {
             heroWinRateVs: (m.wins / m.games_played) * 100
           }));
 
-        const sourceRows = matchupRowsAll.filter((m) => m.gamesPlayed >= MIN_MATCHUP_GAMES_MINI_PROFILE);
+        const sourceRows = selectMatchupSourceRows(matchupRowsAll);
 
         const { counters, favorable } = pickCountersAndFavorable(sourceRows, MATCHUP_TOP_N);
         setBestAgainst(favorable);

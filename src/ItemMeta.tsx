@@ -61,16 +61,16 @@ function buildItemMetaRows(
   const built: ItemMetaRow[] = [];
   for (const [itemId, { games, wins }] of agg.entries()) {
     const def: OpenDotaItemConstant | undefined = defsById.get(itemId);
-    if (!def) continue;
+    const fallbackName = `Предмет #${itemId}`;
     built.push({
-      key: def.internalKey ?? `item_${itemId}`,
-      name: def.dname,
-      cost: def.cost != null && Number.isFinite(def.cost) ? def.cost : null,
+      key: def?.internalKey ?? `item_${itemId}`,
+      name: def?.dname ?? fallbackName,
+      cost: def?.cost != null && Number.isFinite(def.cost) ? def.cost : null,
       games,
       wins,
       winRate: games > 0 ? (wins / games) * 100 : 0,
       scenarioShare: totalPlayers > 0 ? (games / totalPlayers) * 100 : 0,
-      img: def.img
+      img: def?.img
     });
   }
   return built;
@@ -122,12 +122,21 @@ export function ItemMeta() {
           setIsLoading(true);
         }
         setError(null);
-        const [stats, constants] = await Promise.all([
+        const [statsRes, constantsRes] = await Promise.allSettled([
           fetchItemMetaStatsCached(),
           fetchItemConstantsCached()
         ]);
         if (cancelled) return;
+        const stats = statsRes.status === "fulfilled" ? statsRes.value : [];
+        const constants =
+          constantsRes.status === "fulfilled" ? constantsRes.value : (cachedConstants ?? {});
+
         setRows(buildItemMetaRows(stats, constants));
+        if (stats.length === 0) {
+          setError("Не удалось загрузить данные предметов из OpenDota.");
+        } else if (constantsRes.status !== "fulfilled") {
+          setError("Справочник предметов загружен частично. Часть названий может быть без иконок.");
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Не удалось загрузить данные предметов.");
