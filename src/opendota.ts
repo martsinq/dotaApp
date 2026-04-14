@@ -20,6 +20,17 @@ export type OpenDotaHeroStats = {
   "8_pick": number; "8_win": number;
 };
 
+type OpenDotaHeroBasic = {
+  id: number;
+  name: string;
+  localized_name: string;
+  primary_attr: "str" | "agi" | "int" | "all";
+  attack_type: "Melee" | "Ranged";
+  roles: string[];
+  img?: string;
+  icon?: string;
+};
+
 export type OpenDotaHeroMatchup = {
   hero_id: number;
   games_played: number;
@@ -285,6 +296,42 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
   } catch (err) {
     const stale = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
     if (stale && stale.length > 0) return stale;
+    // Rate-limit fallback: lightweight endpoint without bracket stats.
+    // Keeps app functional (draft/search/navigation), while advanced percentages degrade gracefully.
+    const basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
+      timeoutMs: 10000,
+      maxAttempts: 2
+    });
+    const normalized: OpenDotaHeroStats[] = basics.map((h) => ({
+      id: h.id,
+      name: h.name,
+      localized_name: h.localized_name,
+      primary_attr: h.primary_attr,
+      attack_type: h.attack_type,
+      roles: Array.isArray(h.roles) ? h.roles : [],
+      img: h.img,
+      icon: h.icon,
+      "1_pick": 0,
+      "1_win": 0,
+      "2_pick": 0,
+      "2_win": 0,
+      "3_pick": 0,
+      "3_win": 0,
+      "4_pick": 0,
+      "4_win": 0,
+      "5_pick": 0,
+      "5_win": 0,
+      "6_pick": 0,
+      "6_win": 0,
+      "7_pick": 0,
+      "7_win": 0,
+      "8_pick": 0,
+      "8_win": 0
+    }));
+    if (normalized.length > 0) {
+      setCached("heroStats", normalized);
+      return normalized;
+    }
     throw err;
   }
 }
