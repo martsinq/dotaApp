@@ -1,4 +1,6 @@
 const UPSTREAM_BASE = "https://api.opendota.com/api";
+const HEROES_STATIC_FALLBACK_URL =
+  "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS",
@@ -91,6 +93,45 @@ function normalizeHeroStatsFromHeroes(heroes) {
     }));
 }
 
+async function fetchHeroStatsFallbackPayload() {
+  // 1) Lightweight OpenDota endpoint as primary fallback.
+  try {
+    const heroesResp = await fetchWithTimeout(`${UPSTREAM_BASE}/heroes`, 10000);
+    if (heroesResp.ok) {
+      const heroesJson = await heroesResp.json();
+      const normalized = normalizeHeroStatsFromHeroes(heroesJson);
+      if (normalized.length > 0) return normalized;
+    }
+  } catch {
+    // continue to static fallback
+  }
+
+  // 2) Static hero constants mirror (independent from OpenDota API rate-limit).
+  try {
+    const staticResp = await fetchWithTimeout(HEROES_STATIC_FALLBACK_URL, 10000);
+    if (staticResp.ok) {
+      const raw = await staticResp.json();
+      const normalized = normalizeHeroStatsFromHeroes(
+        raw && typeof raw === "object" ? Object.values(raw) : []
+      );
+      if (normalized.length > 0) return normalized;
+    }
+  } catch {
+    // continue to final safe fallback
+  }
+
+  // 3) Final safe fallback: never return upstream_429 for /heroStats.
+  return [];
+}
+
+function fallbackHeroStatsResponse(policy, payload, cacheStatus) {
+  const fallbackResp = new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" }
+  });
+  return withCacheHeaders(fallbackResp, policy.ttl, policy.staleSeconds, cacheStatus);
+}
+
 async function readCached(cache, keyRequest) {
   return cache.match(keyRequest);
 }
@@ -142,29 +183,10 @@ export default {
 
         // Cold-start fallback for heroStats during OpenDota rate limiting.
         if (url.pathname === "/api/od/heroStats") {
-          try {
-            const heroesResp = await fetchWithTimeout(`${UPSTREAM_BASE}/heroes`, 10000);
-            if (heroesResp.ok) {
-              const heroesJson = await heroesResp.json();
-              const normalized = normalizeHeroStatsFromHeroes(heroesJson);
-              if (normalized.length > 0) {
-                const fallbackResp = new Response(JSON.stringify(normalized), {
-                  status: 200,
-                  headers: { "content-type": "application/json; charset=utf-8" }
-                });
-                const proxiedFallback = withCacheHeaders(
-                  fallbackResp,
-                  policy.ttl,
-                  policy.staleSeconds,
-                  "FALLBACK"
-                );
-                ctx.waitUntil(cache.put(cacheKey, proxiedFallback.clone()));
-                return proxiedFallback;
-              }
-            }
-          } catch {
-            // fall through to controlled error
-          }
+          const payload = await fetchHeroStatsFallbackPayload();
+          const proxiedFallback = fallbackHeroStatsResponse(policy, payload, "FALLBACK");
+          ctx.waitUntil(cache.put(cacheKey, proxiedFallback.clone()));
+          return proxiedFallback;
         }
 
         return json(`upstream_${upstreamResp.status}`, 503);
@@ -178,6 +200,10 @@ export default {
     } catch {
       const stale = await readCached(cache, cacheKey);
       if (stale) return withCacheHeaders(stale, policy.ttl, policy.staleSeconds, "STALE");
+      if (url.pathname === "/api/od/heroStats") {
+        const payload = await fetchHeroStatsFallbackPayload();
+        return fallbackHeroStatsResponse(policy, payload, "FALLBACK");
+      }
       return json("upstream_unavailable", 503);
     }
   }
