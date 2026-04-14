@@ -210,8 +210,10 @@ type FetchJsonOptions = {
 };
 
 async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<T> {
-  const timeoutMs = opts.timeoutMs ?? 12000;
-  const maxAttempts = opts.maxAttempts ?? 2;
+  const isExplorer = path.startsWith("/explorer?");
+  /** Explorer: одна попытка на базу — иначе при ошибке первой базы получается до 6 HTTP на один SQL (2×3). */
+  const timeoutMs = opts.timeoutMs ?? (isExplorer ? 22000 : 12000);
+  const maxAttempts = opts.maxAttempts ?? (isExplorer ? 1 : 2);
   const retryBackoffMs = opts.retryBackoffMs ?? 450;
   let lastError: Error | null = null;
   /** Только прокси (тот же хост → workers.dev → pages.dev). Прямой api.opendota.com не используем — единая политика кэша/429 на worker. */
@@ -407,7 +409,7 @@ export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<Ope
   const key = `heroAvgKills:${sampleLimit}`;
   const cached = getCached<OpenDotaHeroAvgKills[]>(key, 1000 * 60 * 60 * 24); // 24h
   if (cached) return cached;
-  const limits = [sampleLimit, 150000, 90000, 50000];
+  const limits = [sampleLimit, 120000, 70000];
   for (const limit of limits) {
     try {
       const sql = [
@@ -422,6 +424,7 @@ export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<Ope
         `/explorer?sql=${encodeURIComponent(sql)}`
       );
       if (data.err) continue;
+      if ((data.rows?.length ?? 0) === 0) break;
 
       const rows = (data.rows ?? [])
         .map((row) => ({
@@ -451,7 +454,7 @@ export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenD
   const innerFrom =
     "SELECT hero_id, kills, deaths, assists, match_id FROM player_matches ORDER BY match_id DESC LIMIT ";
   // Меньшие выборки первыми — быстрее ответ explorer, данных обычно достаточно.
-  const limits = [100000, 150000, sampleLimit, 90000, 50000];
+  const limits = [100000, 120000, sampleLimit];
   for (const limit of limits) {
     try {
       const sql = [
@@ -467,6 +470,7 @@ export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenD
         { timeoutMs: 20000 }
       );
       if (data.err) continue;
+      if ((data.rows?.length ?? 0) === 0) break;
 
       const rows = (data.rows ?? [])
         .map((row) => ({
@@ -504,7 +508,7 @@ export async function fetchHeroAvgCoreStatsCached(
   if (cached) return cached;
   const innerFrom =
     "SELECT hero_id, hero_damage, hero_healing, gold_per_min, xp_per_min, tower_damage, match_id FROM player_matches ORDER BY match_id DESC LIMIT ";
-  const limits = [100000, 150000, sampleLimit, 90000, 50000];
+  const limits = [100000, 120000, sampleLimit];
   for (const limit of limits) {
     try {
       const sql = [
@@ -525,6 +529,7 @@ export async function fetchHeroAvgCoreStatsCached(
         { timeoutMs: 20000 }
       );
       if (data.err) continue;
+      if ((data.rows?.length ?? 0) === 0) break;
 
       const rows = (data.rows ?? [])
         .map((row) => ({
@@ -594,7 +599,7 @@ export async function fetchHeroMatchupsLargeSampleCached(
 
   const task = (async (): Promise<OpenDotaHeroMatchup[]> => {
     try {
-      const limits = [100000, 150000, 200000, sampleLimit, 50000];
+      const limits = [100000, 55000];
       for (const limit of limits) {
         try {
           const sql = [
@@ -626,6 +631,7 @@ export async function fetchHeroMatchupsLargeSampleCached(
             { timeoutMs: 22000 }
           );
           if (data.err) continue;
+          if ((data.rows?.length ?? 0) === 0) break;
 
           const rows = (data.rows ?? [])
             .map((row) => ({
@@ -736,7 +742,7 @@ export async function fetchHeroItemPurchaseOrderCached(
   const cached = getCached<OpenDotaHeroItemPurchaseOrderRow[]>(key, 1000 * 60 * 60 * 12);
   if (cached) return cached;
 
-  const limits = [500, 800, 1200, sampleLimit, 400, 250];
+  const limits = [800, 500, 300, sampleLimit];
   for (const limit of limits) {
     try {
       const sql = [
@@ -766,6 +772,7 @@ export async function fetchHeroItemPurchaseOrderCached(
         { timeoutMs: 20000 }
       );
       if (data.err) continue;
+      if ((data.rows?.length ?? 0) === 0) break;
 
       const rows = (data.rows ?? [])
         .map((row) => ({
@@ -806,7 +813,7 @@ export async function fetchItemMetaStatsCached(sampleLimit = 300000): Promise<Op
   const cached = getCached<OpenDotaItemMetaStatRow[]>(key, 1000 * 60 * 60 * 12);
   if (cached) return cached;
 
-  const limits = [sampleLimit, 220000, 160000, 120000, 80000, 50000];
+  const limits = [sampleLimit, 160000, 90000];
   for (const limit of limits) {
     try {
       const sql = [
@@ -852,6 +859,7 @@ export async function fetchItemMetaStatsCached(sampleLimit = 300000): Promise<Op
         `/explorer?sql=${encodeURIComponent(sql)}`
       );
       if (data.err) continue;
+      if ((data.rows?.length ?? 0) === 0) break;
 
       const rows = (data.rows ?? [])
         .map((row) => ({

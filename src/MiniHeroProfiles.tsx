@@ -625,19 +625,7 @@ export function MiniHeroProfiles() {
     };
   }, []);
 
-  /** Прогрев кэша матчапов (тот же SQL, что при открытии профиля) — список героев + пауза, чтобы не конкурировать с heroStats. */
-  useEffect(() => {
-    if (isLoadingList || allHeroes.length === 0) return;
-    const batchSize = 18;
-    const staggerMs = 130;
-    const startDelayMs = 500;
-    const t0 = window.setTimeout(() => {
-      allHeroes.slice(0, batchSize).forEach((h, i) => {
-        window.setTimeout(() => prefetchHeroMatchupsLargeSample(h.id), i * staggerMs);
-      });
-    }, startDelayMs);
-    return () => clearTimeout(t0);
-  }, [isLoadingList, allHeroes]);
+  /** Без массового префетча по списку — каждый explorer тяжёлый; прогрев только для открытого героя и по hover (см. onMouseEnter). */
 
   /** Сразу после появления heroId и списка героев — тот же fetch матчапов, что внутри профиля (общий in-flight). */
   useEffect(() => {
