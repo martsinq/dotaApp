@@ -356,6 +356,91 @@ function buildAvgItemTimingByKeyFromPurchaseOrder(rows: OpenDotaHeroItemPurchase
   return out;
 }
 
+function buildItemsFromPurchaseOrderFallback(
+  purchaseOrder: OpenDotaHeroItemPurchaseOrderRow[],
+  idToDef: Map<number, OpenDotaItemConstant>,
+  usedAsComponent: ReadonlySet<string>
+): { start: PopularBuildSlot[]; transition: PopularBuildSlot[]; late: PopularBuildSlot[] } {
+  const byKey = new Map<string, OpenDotaItemConstant>();
+  for (const def of idToDef.values()) {
+    if (typeof def.internalKey === "string" && def.internalKey.trim().length > 0) {
+      byKey.set(normalizeItemKey(def.internalKey), def);
+    }
+    if (typeof def.dname === "string" && def.dname.trim().length > 0) {
+      byKey.set(normalizeItemKey(def.dname), def);
+    }
+  }
+
+  const dedup = new Map<number, PopularBuildSlot>();
+  for (const row of purchaseOrder) {
+    const key = normalizeItemKey(row.item);
+    if (!key) continue;
+    const def = byKey.get(key);
+    if (!def || !def.id || def.id <= 0) continue;
+    if (isRecipeConstant(def)) continue;
+    const purchases = Number(row.purchases);
+    const avgTimeSec = Number(row.avg_time);
+    if (!Number.isFinite(purchases) || purchases <= 0) continue;
+    const prev = dedup.get(def.id);
+    if (!prev) {
+      dedup.set(def.id, {
+        itemId: def.id,
+        name: def.dname || `Предмет #${def.id}`,
+        img: def.img,
+        purchases,
+        avgTimeSec: Number.isFinite(avgTimeSec) && avgTimeSec >= 0 ? avgTimeSec : undefined
+      });
+      continue;
+    }
+    if (purchases > prev.purchases) prev.purchases = purchases;
+    if (
+      Number.isFinite(avgTimeSec) &&
+      avgTimeSec >= 0 &&
+      (prev.avgTimeSec == null || avgTimeSec < prev.avgTimeSec)
+    ) {
+      prev.avgTimeSec = avgTimeSec;
+    }
+  }
+
+  const all = [...dedup.values()].sort((a, b) => {
+    const ta = a.avgTimeSec ?? Number.MAX_SAFE_INTEGER;
+    const tb = b.avgTimeSec ?? Number.MAX_SAFE_INTEGER;
+    if (ta !== tb) return ta - tb;
+    return b.purchases - a.purchases;
+  });
+  const topOverall = [...all].sort((a, b) => b.purchases - a.purchases);
+  const terminalOnly = all.filter((it) =>
+    isTerminalInventoryStyleItem(idToDef.get(it.itemId), usedAsComponent)
+  );
+
+  let start = all.filter((it) => (it.avgTimeSec ?? Number.MAX_SAFE_INTEGER) <= 600).slice(0, 6);
+  if (start.length === 0) start = all.slice(0, 6);
+
+  let transition = all
+    .filter((it) => {
+      const t = it.avgTimeSec ?? Number.MAX_SAFE_INTEGER;
+      return t > 600 && t <= 1800;
+    })
+    .slice(0, 6);
+  if (transition.length === 0) {
+    const startIds = new Set(start.map((it) => it.itemId));
+    transition = all.filter((it) => !startIds.has(it.itemId)).slice(0, 6);
+  }
+
+  let late = terminalOnly
+    .filter((it) => (it.avgTimeSec ?? 0) > 1800)
+    .sort((a, b) => b.purchases - a.purchases)
+    .slice(0, 6);
+  if (late.length === 0) {
+    late = [...terminalOnly].sort((a, b) => b.purchases - a.purchases).slice(0, 6);
+  }
+  if (late.length === 0) {
+    late = topOverall.slice(0, 6);
+  }
+
+  return { start, transition, late };
+}
+
 function topLateGamePopularItems(
   pop: OpenDotaHeroItemPopularity,
   idToDef: Map<number, OpenDotaItemConstant>,
@@ -659,12 +744,6 @@ export function MiniHeroProfiles() {
         purchaseOrder: OpenDotaHeroItemPurchaseOrderRow[]
       ) => {
         if (cancelled) return;
-        if (!pop) {
-          setLateItems([]);
-          setStartItems([]);
-          setTransitionItems([]);
-          return;
-        }
         try {
           const cachedConstants = peekCachedItemConstantsAnyAge();
           const effectiveConstants =
@@ -678,6 +757,19 @@ export function MiniHeroProfiles() {
           }
           const idMap = itemIdMapFromConstants(effectiveConstants);
           const usedAsComponent = bundle?.usedAsComponentKeys ?? new Set<string>();
+
+          if (!pop) {
+            const fallback = buildItemsFromPurchaseOrderFallback(
+              purchaseOrder,
+              idMap,
+              usedAsComponent
+            );
+            setStartItems(orderItemsByBuildFlow(fallback.start, idMap, undefined));
+            setTransitionItems(orderItemsByBuildFlow(fallback.transition, idMap, undefined));
+            setLateItems(orderItemsByBuildFlow(fallback.late, idMap, undefined));
+            return;
+          }
+
           const explorerTiming = buildAvgItemTimingByKeyFromPurchaseOrder(purchaseOrder);
           const scenarioTiming = buildAvgItemTimingByKeyForHero(selectedHero.id, timings);
           const avgTimingByItemKey = explorerTiming.size > 0 ? explorerTiming : scenarioTiming;
