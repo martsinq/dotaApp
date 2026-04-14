@@ -31,6 +31,31 @@ type OpenDotaHeroBasic = {
   icon?: string;
 };
 
+async function fetchHeroesBasicDirect(): Promise<OpenDotaHeroBasic[]> {
+  const url = "https://api.opendota.com/api/heroes";
+  const maxAttempts = 2;
+  let lastError = new Error("OpenDota /heroes request failed");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return (await res.json()) as OpenDotaHeroBasic[];
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error("Unknown /heroes error");
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, 450 * attempt));
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+  throw lastError;
+}
+
 export type OpenDotaHeroMatchup = {
   hero_id: number;
   games_played: number;
@@ -298,10 +323,16 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
     if (stale && stale.length > 0) return stale;
     // Rate-limit fallback: lightweight endpoint without bracket stats.
     // Keeps app functional (draft/search/navigation), while advanced percentages degrade gracefully.
-    const basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
-      timeoutMs: 10000,
-      maxAttempts: 2
-    });
+    let basics: OpenDotaHeroBasic[] = [];
+    try {
+      basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
+        timeoutMs: 10000,
+        maxAttempts: 2
+      });
+    } catch {
+      // Final fallback when Worker route is not ready or returns upstream_429.
+      basics = await fetchHeroesBasicDirect();
+    }
     const normalized: OpenDotaHeroStats[] = basics.map((h) => ({
       id: h.id,
       name: h.name,
