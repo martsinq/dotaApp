@@ -1,4 +1,3 @@
-const API_BASE = "https://dotaapp.pages.dev/api/od";
 const WORKER_API_BASE = "https://odota-proxy.nekit03102003.workers.dev/api/od";
 const DIRECT_API_BASE = "https://api.opendota.com/api";
 const HEROES_STATIC_FALLBACK_URL =
@@ -236,7 +235,7 @@ async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<
   const maxAttempts = opts.maxAttempts ?? 2;
   const retryBackoffMs = opts.retryBackoffMs ?? 450;
   let lastError: Error | null = null;
-  const bases = [API_BASE, WORKER_API_BASE, DIRECT_API_BASE];
+  const bases = [WORKER_API_BASE, DIRECT_API_BASE];
 
   for (const base of bases) {
     const url = `${base}${path}`;
@@ -280,9 +279,8 @@ const ITEM_CONSTANTS_FALLBACK_URL =
  * Большой JSON (`/constants/items` ~300+ KB) часто не успевает за 12 с на OpenDota — отдельный запрос с длинным таймаутом и зеркалом.
  */
 async function fetchItemConstantsRaw(): Promise<Record<string, unknown>> {
-  const primaryUrl = `${API_BASE}/constants/items`;
   const workerUrl = `${WORKER_API_BASE}/constants/items`;
-  const urls = [primaryUrl, workerUrl, ITEM_CONSTANTS_FALLBACK_URL];
+  const urls = [workerUrl, ITEM_CONSTANTS_FALLBACK_URL];
   const timeoutMs = 45000;
   const attemptsPerUrl = 3;
   let lastError: Error | null = null;
