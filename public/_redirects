@@ -1,6 +1,7 @@
 # SPA: вложенные пути отдают index.html (Cloudflare Pages / Netlify-стиль).
 # Статические файлы (sitemap.xml, robots.txt, *.html в корне) имеют приоритет.
-# Важно: ассеты не должны переписываться на index.html, иначе после деплоя
-# старый index может запрашивать удалённый хеш-файл и получать HTML вместо JS.
-/assets/*  /assets/:splat  200
+# Важно: ассеты и /src/* не должны переписываться на index.html, иначе после деплоя
+# старый index может запрашивать удалённый файл и получать HTML вместо JS (MIME error).
+/assets/*  /assets/:splat  404
+/src/*     /src/:splat     404
 /*    /index.html   200
