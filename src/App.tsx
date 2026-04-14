@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { addMediaQueryChangeListener } from "./mediaQuery";
 import { Draft } from "./Draft";
 import { CaptainModeDraft } from "./CaptainModeDraft";
 import { InvokerTrainer } from "./InvokerTrainer";
@@ -72,18 +73,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const mql = window.matchMedia("(max-width: 900px)");
-    const onViewportChange = () => {
-      if (!mql.matches) return;
+    return addMediaQueryChangeListener("(max-width: 900px)", (narrow) => {
+      if (!narrow) return;
       setMode((m) => {
         if (!isMiniGameMode(m)) return m;
         const base = window.location.origin;
         window.history.replaceState(null, "", `${base}/draft`);
         return "draft";
       });
-    };
-    mql.addEventListener("change", onViewportChange);
-    return () => mql.removeEventListener("change", onViewportChange);
+    });
   }, []);
 
   useEffect(() => {

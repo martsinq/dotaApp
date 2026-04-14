@@ -23,9 +23,16 @@
 /* Резерв под вертикальный скролл: иначе длинные страницы (мета) на ~15px уже коротких — из‑за полосы прокрутки. */
 html {
   scrollbar-gutter: stable;
-  overflow-x: clip;
+  /* clip только с Safari 15.4+; на старых iPhone даёт сброс правила и горизонтальный скролл */
+  overflow-x: hidden;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+}
+
+@supports (overflow: clip) {
+  html {
+    overflow-x: clip;
+  }
 }
 
 * {
