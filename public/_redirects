@@ -1,5 +1,10 @@
 # SPA: вложенные пути отдают index.html (Cloudflare Pages / Netlify-стиль).
 # Статические файлы (sitemap.xml, robots.txt, *.html в корне) имеют приоритет.
 # Fallback for stale cached HTML that still requests /src/main.tsx.
+#
+# ВАЖНО: правило /* → index.html 200 отдаёт HTML на ЛЮБОЙ путь без файла, включая /api/od/*.
+# Тогда fetch('/api/od/heroStats') получает index.html при 200 — JSON.parse падает, «нет данных».
+# Сначала уводим API на worker (302 на внешний URL разрешён; 200-rewrite на внешний — нет).
+/api/od/*  https://odota-proxy.nekit03102003.workers.dev/api/od/:splat  302
 /src/main.tsx  /assets/app.js  200
 /*    /index.html   200

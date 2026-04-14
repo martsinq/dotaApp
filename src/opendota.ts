@@ -1,6 +1,8 @@
 const WORKER_API_BASE = "https://odota-proxy.nekit03102003.workers.dev/api/od";
 const API_BASE = "/api/od";
 const PAGES_API_BASE = "https://dotaapp.pages.dev/api/od";
+/** Последний шанс, если все прокси недоступны (CORS у публичного API обычно открыт). */
+const DIRECT_API_BASE = "https://api.opendota.com/api";
 const HEROES_STATIC_FALLBACK_URL =
   "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
 
@@ -209,6 +211,24 @@ type FetchJsonOptions = {
   retryBackoffMs?: number;
 };
 
+/** Cloudflare Pages SPA: /api/* может вернуть 200 + index.html — не кормим это JSON.parse. */
+async function readJsonResponse<T>(res: Response, pathForErrors: string): Promise<T> {
+  const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+  if (ct.includes("text/html")) {
+    throw new Error(`OpenDota: получен HTML вместо JSON для ${pathForErrors} (проверьте _redirects /api/od)`);
+  }
+  const text = await res.text();
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("<") || trimmed.startsWith("<!")) {
+    throw new Error(`OpenDota: тело ответа похоже на HTML для ${pathForErrors}`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`OpenDota: невалидный JSON для ${pathForErrors}`);
+  }
+}
+
 async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<T> {
   const isExplorer = path.startsWith("/explorer?");
   /** Explorer: одна попытка на базу — иначе при ошибке первой базы получается до 6 HTTP на один SQL (2×3). */
@@ -216,8 +236,8 @@ async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<
   const maxAttempts = opts.maxAttempts ?? (isExplorer ? 1 : 2);
   const retryBackoffMs = opts.retryBackoffMs ?? 450;
   let lastError: Error | null = null;
-  /** Только прокси (тот же хост → workers.dev → pages.dev). Прямой api.opendota.com не используем — единая политика кэша/429 на worker. */
-  const bases = [API_BASE, WORKER_API_BASE, PAGES_API_BASE];
+  /** Сначала прокси; в конце прямой API — если Pages отдал SPA-HTML на /api/od, см. public/_redirects. */
+  const bases = [API_BASE, WORKER_API_BASE, PAGES_API_BASE, DIRECT_API_BASE];
 
   for (const base of bases) {
     const url = `${base}${path}`;
@@ -230,7 +250,7 @@ async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<
         if (!res.ok) {
           throw new Error(`OpenDota error ${res.status} for ${path}`);
         }
-        return (await res.json()) as T;
+        return await readJsonResponse<T>(res, path);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           lastError = new Error(`OpenDota timeout for ${path}`);
@@ -264,7 +284,8 @@ async function fetchItemConstantsRaw(): Promise<Record<string, unknown>> {
   const localUrl = `${API_BASE}/constants/items`;
   const workerUrl = `${WORKER_API_BASE}/constants/items`;
   const pagesUrl = `${PAGES_API_BASE}/constants/items`;
-  const urls = [localUrl, workerUrl, pagesUrl, ITEM_CONSTANTS_FALLBACK_URL];
+  const directUrl = `${DIRECT_API_BASE}/constants/items`;
+  const urls = [localUrl, workerUrl, pagesUrl, directUrl, ITEM_CONSTANTS_FALLBACK_URL];
   const timeoutMs = 45000;
   const attemptsPerUrl = 3;
   let lastError: Error | null = null;
@@ -278,7 +299,10 @@ async function fetchItemConstantsRaw(): Promise<Record<string, unknown>> {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status} for items constants`);
         }
-        return (await res.json()) as Record<string, unknown>;
+        if (url.includes("githubusercontent")) {
+          return (await res.json()) as Record<string, unknown>;
+        }
+        return await readJsonResponse<Record<string, unknown>>(res, "/constants/items");
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           lastError = new Error(
