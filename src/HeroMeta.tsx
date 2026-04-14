@@ -4,6 +4,9 @@ import {
   fetchHeroAvgKdaCached,
   fetchHeroStatsCached,
   heroPortraitUrlCandidates,
+  peekCachedHeroAvgCoreStatsAnyAge,
+  peekCachedHeroAvgKdaAnyAge,
+  peekCachedHeroStatsAnyAge,
   pubWinRatePercent,
   type OpenDotaHeroStats
 } from "./opendota";
@@ -272,9 +275,50 @@ function bracketBan(hero: OpenDotaHeroStats, bracket: 1 | 2 | 3 | 4 | 5 | 6 | 7 
   return readNumericStat(hero, "7_ban");
 }
 
+function buildBaseHeroMetaRows(stats: OpenDotaHeroStats[]): HeroMetaRow[] {
+  return stats.map((h) => {
+    const games =
+      h["1_pick"] +
+      h["2_pick"] +
+      h["3_pick"] +
+      h["4_pick"] +
+      h["5_pick"] +
+      h["6_pick"] +
+      h["7_pick"] +
+      h["8_pick"];
+    const bans =
+      readNumericStat(h, "1_ban") +
+      readNumericStat(h, "2_ban") +
+      readNumericStat(h, "3_ban") +
+      readNumericStat(h, "4_ban") +
+      readNumericStat(h, "5_ban") +
+      readNumericStat(h, "6_ban") +
+      readNumericStat(h, "7_ban") +
+      readNumericStat(h, "8_ban");
+    return {
+      hero: h,
+      overallWinRate: pubWinRatePercent(h),
+      overallGames: games,
+      overallBans: bans,
+      proBans: readNumericStat(h, "pro_ban"),
+      proPicks: readNumericStat(h, "pro_pick"),
+      avgKills: null,
+      avgDeaths: null,
+      avgAssists: null,
+      avgHeroDamage: null,
+      avgHeroHealing: null,
+      avgGpm: null,
+      avgXpm: null,
+      avgTowerDamage: null
+    };
+  });
+}
+
 export function HeroMeta() {
   const [rows, setRows] = useState<HeroMetaRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
+  const [advancedLoaded, setAdvancedLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("winRate");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -287,17 +331,93 @@ export function HeroMeta() {
   const roleFilterWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    const staleStats = peekCachedHeroStatsAnyAge();
+    if (staleStats && staleStats.length > 0) {
+      setRows(buildBaseHeroMetaRows(staleStats));
+      setIsLoading(false);
+    }
+
     let cancelled = false;
     (async () => {
       try {
-        setIsLoading(true);
+        if (!staleStats || staleStats.length === 0) {
+          setIsLoading(true);
+        }
         setError(null);
-        const [stats, avgKdaRows, avgCoreRows] = await Promise.all([
-          fetchHeroStatsCached(),
+        const stats = await fetchHeroStatsCached();
+        if (cancelled) return;
+        setRows(buildBaseHeroMetaRows(stats));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Не удалось загрузить данные OpenDota");
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (advancedLoaded) return;
+    if (rows.length === 0) return;
+    if (selectedMetrics.length === 0) return;
+
+    const staleKda = peekCachedHeroAvgKdaAnyAge();
+    const staleCore = peekCachedHeroAvgCoreStatsAnyAge();
+    if (staleKda && staleCore) {
+      const avgKdaByHero = new Map<number, { kills: number; deaths: number; assists: number }>(
+        staleKda.map((row) => [
+          row.hero_id,
+          { kills: row.avg_kills, deaths: row.avg_deaths, assists: row.avg_assists }
+        ])
+      );
+      const avgCoreByHero = new Map<
+        number,
+        {
+          heroDamage: number;
+          heroHealing: number;
+          gpm: number;
+          xpm: number;
+          towerDamage: number;
+        }
+      >(
+        staleCore.map((row) => [
+          row.hero_id,
+          {
+            heroDamage: row.avg_hero_damage,
+            heroHealing: row.avg_hero_healing,
+            gpm: row.avg_gold_per_min,
+            xpm: row.avg_xp_per_min,
+            towerDamage: row.avg_tower_damage
+          }
+        ])
+      );
+      setRows((prev) =>
+        prev.map((r) => ({
+          ...r,
+          avgKills: avgKdaByHero.get(r.hero.id)?.kills ?? null,
+          avgDeaths: avgKdaByHero.get(r.hero.id)?.deaths ?? null,
+          avgAssists: avgKdaByHero.get(r.hero.id)?.assists ?? null,
+          avgHeroDamage: avgCoreByHero.get(r.hero.id)?.heroDamage ?? null,
+          avgHeroHealing: avgCoreByHero.get(r.hero.id)?.heroHealing ?? null,
+          avgGpm: avgCoreByHero.get(r.hero.id)?.gpm ?? null,
+          avgXpm: avgCoreByHero.get(r.hero.id)?.xpm ?? null,
+          avgTowerDamage: avgCoreByHero.get(r.hero.id)?.towerDamage ?? null
+        }))
+      );
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        setIsLoadingAdvanced(true);
+        const [avgKdaRows, avgCoreRows] = await Promise.all([
           fetchHeroAvgKdaCached(),
           fetchHeroAvgCoreStatsCached()
         ]);
         if (cancelled) return;
+
         const avgKdaByHero = new Map<number, { kills: number; deaths: number; assists: number }>(
           avgKdaRows.map((row) => [
             row.hero_id,
@@ -326,53 +446,31 @@ export function HeroMeta() {
           ])
         );
 
-        const next: HeroMetaRow[] = stats.map((h) => {
-          const games =
-            h["1_pick"] +
-            h["2_pick"] +
-            h["3_pick"] +
-            h["4_pick"] +
-            h["5_pick"] +
-            h["6_pick"] +
-            h["7_pick"] +
-            h["8_pick"];
-          const bans =
-            readNumericStat(h, "1_ban") +
-            readNumericStat(h, "2_ban") +
-            readNumericStat(h, "3_ban") +
-            readNumericStat(h, "4_ban") +
-            readNumericStat(h, "5_ban") +
-            readNumericStat(h, "6_ban") +
-            readNumericStat(h, "7_ban") +
-            readNumericStat(h, "8_ban");
-          return {
-            hero: h,
-            overallWinRate: pubWinRatePercent(h),
-            overallGames: games,
-            overallBans: bans,
-            proBans: readNumericStat(h, "pro_ban"),
-            proPicks: readNumericStat(h, "pro_pick"),
-            avgKills: avgKdaByHero.get(h.id)?.kills ?? null,
-            avgDeaths: avgKdaByHero.get(h.id)?.deaths ?? null,
-            avgAssists: avgKdaByHero.get(h.id)?.assists ?? null,
-            avgHeroDamage: avgCoreByHero.get(h.id)?.heroDamage ?? null,
-            avgHeroHealing: avgCoreByHero.get(h.id)?.heroHealing ?? null,
-            avgGpm: avgCoreByHero.get(h.id)?.gpm ?? null,
-            avgXpm: avgCoreByHero.get(h.id)?.xpm ?? null,
-            avgTowerDamage: avgCoreByHero.get(h.id)?.towerDamage ?? null
-          };
-        });
-        setRows(next);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Не удалось загрузить данные OpenDota");
+        setRows((prev) =>
+          prev.map((r) => ({
+            ...r,
+            avgKills: avgKdaByHero.get(r.hero.id)?.kills ?? null,
+            avgDeaths: avgKdaByHero.get(r.hero.id)?.deaths ?? null,
+            avgAssists: avgKdaByHero.get(r.hero.id)?.assists ?? null,
+            avgHeroDamage: avgCoreByHero.get(r.hero.id)?.heroDamage ?? null,
+            avgHeroHealing: avgCoreByHero.get(r.hero.id)?.heroHealing ?? null,
+            avgGpm: avgCoreByHero.get(r.hero.id)?.gpm ?? null,
+            avgXpm: avgCoreByHero.get(r.hero.id)?.xpm ?? null,
+            avgTowerDamage: avgCoreByHero.get(r.hero.id)?.towerDamage ?? null
+          }))
+        );
+        setAdvancedLoaded(true);
+      } catch {
+        // Optional advanced metrics should not block base Hero Meta.
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoadingAdvanced(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [rows.length, selectedMetrics, advancedLoaded]);
 
   const totalGames = useMemo(() => {
     if (selectedBracket === "all") {
@@ -589,6 +687,9 @@ export function HeroMeta() {
       <div className="card hero-meta-content">
         <h1>Мета героев</h1>
         {error && <div className="error-banner">{error}</div>}
+        {isLoadingAdvanced && (
+          <div className="hero-meta-loading">Догружаю дополнительные показатели...</div>
+        )}
 
         <div className="toolbar hero-meta-toolbar">
           <div className="hero-meta-search">

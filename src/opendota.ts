@@ -117,6 +117,37 @@ export function setCached<T>(key: string, data: T): void {
   }
 }
 
+export function peekCachedHeroStatsAnyAge(): OpenDotaHeroStats[] | null {
+  const data = getCached<OpenDotaHeroStats[]>("heroStats", Number.MAX_SAFE_INTEGER);
+  return data && data.length > 0 ? data : null;
+}
+
+export function peekCachedHeroAvgKdaAnyAge(sampleLimit = 300000): OpenDotaHeroAvgKda[] | null {
+  const data = getCached<OpenDotaHeroAvgKda[]>(
+    `heroAvgKda:${sampleLimit}`,
+    Number.MAX_SAFE_INTEGER
+  );
+  return data && data.length > 0 ? data : null;
+}
+
+export function peekCachedHeroAvgCoreStatsAnyAge(
+  sampleLimit = 300000
+): OpenDotaHeroAvgCoreStats[] | null {
+  const data = getCached<OpenDotaHeroAvgCoreStats[]>(
+    `heroAvgCoreStats:${sampleLimit}`,
+    Number.MAX_SAFE_INTEGER
+  );
+  return data && data.length > 0 ? data : null;
+}
+
+export function peekCachedItemMetaStatsAnyAge(sampleLimit = 300000): OpenDotaItemMetaStatRow[] | null {
+  const data = getCached<OpenDotaItemMetaStatRow[]>(
+    `itemMetaStats:v1:${sampleLimit}`,
+    Number.MAX_SAFE_INTEGER
+  );
+  return data && data.length > 0 ? data : null;
+}
+
 type FetchJsonOptions = {
   timeoutMs?: number;
   maxAttempts?: number;
@@ -714,6 +745,16 @@ export async function fetchItemMetaStatsCached(sampleLimit = 300000): Promise<Op
 }
 
 const ITEM_CONSTANTS_BUNDLE_CACHE_KEY = "itemConstantsBundle:v2";
+
+export function peekCachedItemConstantsAnyAge(): Record<string, OpenDotaItemConstant> | null {
+  const cached = getCached<ItemConstantsBundleCached>(
+    ITEM_CONSTANTS_BUNDLE_CACHE_KEY,
+    Number.MAX_SAFE_INTEGER
+  );
+  if (!cached) return null;
+  const size = Object.keys(cached.constants).length;
+  return size > 0 ? cached.constants : null;
+}
 
 /** Справочник предметов + множество ключей, которые являются частью рецепта другого предмета. */
 export async function fetchItemConstantsBundleCached(): Promise<{

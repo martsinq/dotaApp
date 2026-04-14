@@ -3,6 +3,8 @@ import {
   fetchItemConstantsCached,
   fetchItemMetaStatsCached,
   itemImageUrlCandidates,
+  peekCachedItemConstantsAnyAge,
+  peekCachedItemMetaStatsAnyAge,
   type OpenDotaItemConstant,
   type OpenDotaItemMetaStatRow
 } from "./opendota";
@@ -45,6 +47,35 @@ function aggregateByItemId(rows: OpenDotaItemMetaStatRow[]): Map<number, { games
   return m;
 }
 
+function buildItemMetaRows(
+  stats: OpenDotaItemMetaStatRow[],
+  constants: Record<string, OpenDotaItemConstant>
+): ItemMetaRow[] {
+  const agg = aggregateByItemId(stats);
+  const defsById = itemIdMapFromConstants(constants);
+  let totalPlayers = 0;
+  for (const row of agg.values()) {
+    totalPlayers = Math.max(totalPlayers, row.totalPlayers);
+  }
+
+  const built: ItemMetaRow[] = [];
+  for (const [itemId, { games, wins }] of agg.entries()) {
+    const def: OpenDotaItemConstant | undefined = defsById.get(itemId);
+    if (!def) continue;
+    built.push({
+      key: def.internalKey ?? `item_${itemId}`,
+      name: def.dname,
+      cost: def.cost != null && Number.isFinite(def.cost) ? def.cost : null,
+      games,
+      wins,
+      winRate: games > 0 ? (wins / games) * 100 : 0,
+      scenarioShare: totalPlayers > 0 ? (games / totalPlayers) * 100 : 0,
+      img: def.img
+    });
+  }
+  return built;
+}
+
 function ItemIcon({ img, alt }: { img?: string; alt: string }) {
   const sources = useMemo(() => itemImageUrlCandidates(img), [img]);
   const [idx, setIdx] = useState(0);
@@ -77,41 +108,26 @@ export function ItemMeta() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   useEffect(() => {
+    const cachedStats = peekCachedItemMetaStatsAnyAge();
+    const cachedConstants = peekCachedItemConstantsAnyAge();
+    if (cachedStats && cachedConstants) {
+      setRows(buildItemMetaRows(cachedStats, cachedConstants));
+      setIsLoading(false);
+    }
+
     let cancelled = false;
     (async () => {
       try {
-        setIsLoading(true);
+        if (!cachedStats || !cachedConstants) {
+          setIsLoading(true);
+        }
         setError(null);
         const [stats, constants] = await Promise.all([
           fetchItemMetaStatsCached(),
           fetchItemConstantsCached()
         ]);
         if (cancelled) return;
-
-        const agg = aggregateByItemId(stats);
-        const defsById = itemIdMapFromConstants(constants);
-        let totalPlayers = 0;
-        for (const row of agg.values()) {
-          totalPlayers = Math.max(totalPlayers, row.totalPlayers);
-        }
-
-        const built: ItemMetaRow[] = [];
-        for (const [itemId, { games, wins }] of agg.entries()) {
-          const def: OpenDotaItemConstant | undefined = defsById.get(itemId);
-          if (!def) continue;
-          built.push({
-            key: def.internalKey ?? `item_${itemId}`,
-            name: def.dname,
-            cost: def.cost != null && Number.isFinite(def.cost) ? def.cost : null,
-            games,
-            wins,
-            winRate: games > 0 ? (wins / games) * 100 : 0,
-            scenarioShare: totalPlayers > 0 ? (games / totalPlayers) * 100 : 0,
-            img: def.img
-          });
-        }
-
-        setRows(built);
+        setRows(buildItemMetaRows(stats, constants));
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Не удалось загрузить данные предметов.");
