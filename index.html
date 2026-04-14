@@ -30,6 +30,48 @@
       Для работы приложения нужен JavaScript. Dota 2: драфт, мета героев и предметов, матчапы.
     </noscript>
     <div id="root"></div>
+    <script>
+      (function () {
+        var key = "app-recover-once";
+        var recovered = false;
+        try {
+          recovered = sessionStorage.getItem(key) === "1";
+        } catch (_) {}
+
+        function markRecovered() {
+          try {
+            sessionStorage.setItem(key, "1");
+          } catch (_) {}
+        }
+
+        function clearRecovered() {
+          try {
+            sessionStorage.removeItem(key);
+          } catch (_) {}
+        }
+
+        window.addEventListener(
+          "load",
+          function () {
+            setTimeout(function () {
+              var root = document.getElementById("root");
+              if (!root) return;
+              var isEmpty = !root.firstElementChild && root.textContent.trim() === "";
+              if (!isEmpty) {
+                clearRecovered();
+                return;
+              }
+              if (recovered) return;
+              markRecovered();
+              var url = new URL(window.location.href);
+              url.searchParams.set("_r", String(Date.now()));
+              window.location.replace(url.toString());
+            }, 1800);
+          },
+          { once: true }
+        );
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
