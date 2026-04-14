@@ -441,6 +441,80 @@ function buildItemsFromPurchaseOrderFallback(
   return { start, transition, late };
 }
 
+function pickPrimaryRoleForFallback(hero: OpenDotaHeroStats): RoleKey {
+  const roleNames = new Set((hero.roles ?? []).map((r) => r.toLowerCase()));
+  const localized = (hero.localized_name ?? "").toLowerCase();
+  if (CARRY_HERO_NAMES.has(localized) || roleNames.has("carry")) return "carry";
+  if (MID_HERO_NAMES.has(localized) || roleNames.has("nuker")) return "mid";
+  if (OFFLANE_HERO_NAMES.has(localized) || roleNames.has("initiator")) return "offlane";
+  if (SOFT_SUPPORT_HERO_NAMES.has(localized)) return "softSupport";
+  if (HARD_SUPPORT_HERO_NAMES.has(localized) || roleNames.has("support")) return "hardSupport";
+  return "carry";
+}
+
+function buildRoleBasedFallbackBuild(
+  hero: OpenDotaHeroStats,
+  idToDef: Map<number, OpenDotaItemConstant>
+): { start: PopularBuildSlot[]; transition: PopularBuildSlot[]; late: PopularBuildSlot[] } {
+  const byKey = new Map<string, OpenDotaItemConstant>();
+  for (const def of idToDef.values()) {
+    if (def.internalKey) byKey.set(normalizeItemKey(def.internalKey), def);
+  }
+
+  const role = pickPrimaryRoleForFallback(hero);
+  const presets: Record<RoleKey, { start: string[]; transition: string[]; late: string[] }> = {
+    carry: {
+      start: ["tango", "branches", "magic_wand", "wraith_band", "power_treads"],
+      transition: ["orb_of_corrosion", "dragon_lance", "black_king_bar", "yasha", "manta"],
+      late: ["butterfly", "satanic", "skadi", "swift_blink", "monkey_king_bar", "daedalus"]
+    },
+    mid: {
+      start: ["tango", "bottle", "magic_wand", "null_talisman", "power_treads"],
+      transition: ["witch_blade", "blink", "black_king_bar", "kaya", "kaya_and_sange"],
+      late: ["octarine_core", "wind_waker", "scythe", "shivas_guard", "aeon_disk", "aghanims_scepter"]
+    },
+    offlane: {
+      start: ["tango", "magic_wand", "bracer", "phase_boots", "soul_ring"],
+      transition: ["blink", "blade_mail", "pipe", "crimson_guard", "lotus_orb"],
+      late: ["shivas_guard", "overwhelming_blink", "heart", "assault", "refresher", "aghanims_scepter"]
+    },
+    softSupport: {
+      start: ["tango", "magic_wand", "arcane_boots", "urn_of_shadows", "wind_lace"],
+      transition: ["spirit_vessel", "force_staff", "glimmer_cape", "aether_lens", "blink"],
+      late: ["aghanims_shard", "aghanims_scepter", "octarine_core", "wind_waker", "scythe", "aeon_disk"]
+    },
+    hardSupport: {
+      start: ["tango", "magic_wand", "arcane_boots", "wind_lace", "tranquil_boots"],
+      transition: ["force_staff", "glimmer_cape", "mekansm", "guardian_greaves", "aether_lens"],
+      late: ["lotus_orb", "shivas_guard", "wind_waker", "scythe", "aghanims_scepter", "aeon_disk"]
+    }
+  };
+
+  const toSlots = (keys: string[], startPurchases: number): PopularBuildSlot[] => {
+    const out: PopularBuildSlot[] = [];
+    let p = startPurchases;
+    for (const k of keys) {
+      const def = byKey.get(normalizeItemKey(k));
+      if (!def || !def.id || def.id <= 0) continue;
+      out.push({
+        itemId: def.id,
+        name: def.dname || `Предмет #${def.id}`,
+        img: def.img,
+        purchases: p
+      });
+      p = Math.max(1, p - 7);
+    }
+    return out;
+  };
+
+  const preset = presets[role];
+  return {
+    start: toSlots(preset.start, 100),
+    transition: toSlots(preset.transition, 85),
+    late: toSlots(preset.late, 70)
+  };
+}
+
 function topLateGamePopularItems(
   pop: OpenDotaHeroItemPopularity,
   idToDef: Map<number, OpenDotaItemConstant>,
@@ -738,6 +812,7 @@ export function MiniHeroProfiles() {
         .catch(() => {});
 
       const applyItemBuild = (
+        heroForBuild: OpenDotaHeroStats,
         pop: OpenDotaHeroItemPopularity | null,
         bundle: Awaited<ReturnType<typeof fetchItemConstantsBundleCached>> | null,
         timings: Awaited<ReturnType<typeof fetchItemTimingsCached>>,
@@ -764,9 +839,14 @@ export function MiniHeroProfiles() {
               idMap,
               usedAsComponent
             );
-            setStartItems(orderItemsByBuildFlow(fallback.start, idMap, undefined));
-            setTransitionItems(orderItemsByBuildFlow(fallback.transition, idMap, undefined));
-            setLateItems(orderItemsByBuildFlow(fallback.late, idMap, undefined));
+            const hasPurchaseFallback =
+              fallback.start.length > 0 || fallback.transition.length > 0 || fallback.late.length > 0;
+            const base = hasPurchaseFallback
+              ? fallback
+              : buildRoleBasedFallbackBuild(heroForBuild, idMap);
+            setStartItems(orderItemsByBuildFlow(base.start, idMap, undefined));
+            setTransitionItems(orderItemsByBuildFlow(base.transition, idMap, undefined));
+            setLateItems(orderItemsByBuildFlow(base.late, idMap, undefined));
             return;
           }
 
@@ -802,7 +882,7 @@ export function MiniHeroProfiles() {
         if (cancelled) return;
         const pop = popRes.status === "fulfilled" ? popRes.value : null;
         const bundle = bundleRes.status === "fulfilled" ? bundleRes.value : null;
-        applyItemBuild(pop, bundle, [], []);
+        applyItemBuild(selectedHero, pop, bundle, [], []);
         setIsLoadingPopularBuild(false);
       });
 
@@ -813,7 +893,7 @@ export function MiniHeroProfiles() {
           const bundle = bundleRes.status === "fulfilled" ? bundleRes.value : null;
           const timings = timingsRes.status === "fulfilled" ? timingsRes.value : [];
           const purchaseOrder = purchaseRes.status === "fulfilled" ? purchaseRes.value : [];
-          applyItemBuild(pop, bundle, timings, purchaseOrder);
+          applyItemBuild(selectedHero, pop, bundle, timings, purchaseOrder);
         }
       );
 
