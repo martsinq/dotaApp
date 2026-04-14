@@ -194,7 +194,8 @@ export default {
     }
 
     try {
-      const upstreamResp = await fetchWithTimeout(upstreamWithQuery, 12000);
+      const upstreamTimeoutMs = url.pathname === "/api/od/heroStats" ? 28000 : 12000;
+      const upstreamResp = await fetchWithTimeout(upstreamWithQuery, upstreamTimeoutMs);
       if (upstreamResp.ok) {
         const proxied = withCacheHeaders(upstreamResp, policy.ttl, policy.staleSeconds, "MISS");
         ctx.waitUntil(cache.put(cacheKey, proxied.clone()));

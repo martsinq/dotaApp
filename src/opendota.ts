@@ -144,7 +144,7 @@ type CacheEntry<T> = {
   data: T;
 };
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 /** Параллельные вызовы fetchHeroMatchupsLargeSampleCached для одного hero_id — один сетевой запрос. */
 const inFlightHeroMatchupsLarge = new Map<number, Promise<OpenDotaHeroMatchup[]>>();
@@ -182,9 +182,43 @@ export function setCached<T>(key: string, data: T): void {
   }
 }
 
+/** Реальный /heroStats с брекетами; fallback воркера из /heroes даёт все _pick = 0. */
+function heroStatsHasRealPubData(stats: OpenDotaHeroStats[]): boolean {
+  if (!stats.length) return false;
+  let sum = 0;
+  for (const h of stats) {
+    sum +=
+      h["1_pick"] +
+      h["2_pick"] +
+      h["3_pick"] +
+      h["4_pick"] +
+      h["5_pick"] +
+      h["6_pick"] +
+      h["7_pick"] +
+      h["8_pick"];
+  }
+  return sum > 50_000;
+}
+
+async function fetchHeroStatsFromBase(base: string): Promise<OpenDotaHeroStats[]> {
+  const url = `${base}/heroStats`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 28000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`OpenDota error ${res.status} for /heroStats`);
+    }
+    return await readJsonResponse<OpenDotaHeroStats[]>(res, "/heroStats");
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export function peekCachedHeroStatsAnyAge(): OpenDotaHeroStats[] | null {
   const data = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
-  return data && data.length > 0 ? data : null;
+  if (!data || data.length === 0) return null;
+  return heroStatsHasRealPubData(data) ? data : null;
 }
 
 export function peekCachedHeroAvgKdaAnyAge(sampleLimit = 300000): OpenDotaHeroAvgKda[] | null {
@@ -368,18 +402,34 @@ function parseItemConstantsBundle(data: Record<string, unknown>): {
 
 export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
   const cached = getCached<OpenDotaHeroStats[]>("heroStats", 1000 * 60 * 60 * 24); // 24h
-  if (cached) return cached;
+  if (cached && heroStatsHasRealPubData(cached)) return cached;
   if (inFlightHeroStats) return inFlightHeroStats;
 
   inFlightHeroStats = (async (): Promise<OpenDotaHeroStats[]> => {
     try {
       try {
-        const data = await fetchJson<OpenDotaHeroStats[]>("/heroStats");
-        setCached("heroStats", data);
-        return data;
+        let data = await fetchJson<OpenDotaHeroStats[]>("/heroStats", {
+          timeoutMs: 28000,
+          maxAttempts: 2
+        });
+        if (!heroStatsHasRealPubData(data)) {
+          try {
+            const direct = await fetchHeroStatsFromBase(DIRECT_API_BASE);
+            if (heroStatsHasRealPubData(direct)) {
+              data = direct;
+            }
+          } catch {
+            // остаётся деградированный ответ прокси — ниже как при ошибке
+          }
+        }
+        if (heroStatsHasRealPubData(data)) {
+          setCached("heroStats", data);
+          return data;
+        }
+        throw new Error("heroStats degraded (zero pub picks)");
       } catch (err) {
         const stale = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
-        if (stale && stale.length > 0) return stale;
+        if (stale && heroStatsHasRealPubData(stale)) return stale;
         let basics: OpenDotaHeroBasic[] = [];
         try {
           basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
@@ -416,7 +466,7 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
           "8_win": 0
         }));
         if (normalized.length > 0) {
-          setCached("heroStats", normalized);
+          // Не пишем в кэш «heroStats» без брекетов — иначе снова 50% / 0% пика до истечения TTL.
           return normalized;
         }
         throw err;
