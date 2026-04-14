@@ -21,8 +21,8 @@ const MIN_SOURCE_ROWS_STRICT = 5;
 /** Матчап не должен быть «монеткой»: отклонение WR первого героя от 50% (в процентных пунктах) */
 const MIN_WR_GAP_PP = 3;
 
-const MATCHUP_BATCH = 6;
-const MAX_MATCHUP_WAVES = 5;
+const MATCHUP_BATCH = 2;
+const MAX_MATCHUP_WAVES = 10;
 
 const BEST_STREAK_STORAGE_KEY = "counterpick-best-streak";
 
@@ -188,23 +188,22 @@ async function fetchMatchupsLikeMiniProfile(heroId: number): Promise<OpenDotaHer
   const stale = peekCachedMatchupsLargeAnyAge(heroId);
   if (stale && stale.length > 0) return stale;
 
-  const pLarge = fetchHeroMatchupsLargeSampleCached(heroId);
-  const pRest = fetchHeroMatchupsCached(heroId);
-
   let restRows: OpenDotaHeroMatchup[] = [];
   try {
-    restRows = await pRest;
+    // Fast path: one short attempt for instant first round.
+    restRows = await fetchHeroMatchupsCached(heroId, { timeoutMs: 5000, maxAttempts: 1 });
   } catch {
     restRows = [];
   }
   if (restRows.length > 0) {
-    void pLarge.catch(() => {});
+    // Warm heavy cache in background, but do not block current round.
+    void fetchHeroMatchupsLargeSampleCached(heroId).catch(() => {});
     return restRows;
   }
 
   let largeRows: OpenDotaHeroMatchup[] = [];
   try {
-    largeRows = await pLarge;
+    largeRows = await fetchHeroMatchupsLargeSampleCached(heroId);
   } catch {
     largeRows = [];
   }
@@ -262,6 +261,18 @@ export function CounterpickGame() {
     const shuffled = [...filteredHeroList].sort(() => Math.random() - 0.5);
 
     try {
+      // Instant path: use already cached large matchups without any network wait.
+      for (const hero of shuffled) {
+        const cached = peekCachedMatchupsLargeAnyAge(hero.id);
+        if (!cached || cached.length === 0) continue;
+        const built = tryBuildRoundFromMatchups(hero, cached, heroByIdMemo, allowedOpponentIds);
+        if (built) {
+          setRound(built);
+          setPhase("playing");
+          return;
+        }
+      }
+
       for (let wave = 0; wave < MAX_MATCHUP_WAVES; wave++) {
         const start = wave * MATCHUP_BATCH;
         if (start >= shuffled.length) break;
@@ -307,8 +318,8 @@ export function CounterpickGame() {
   useEffect(() => {
     if (heroList.length === 0) return;
     const startDelayMs = 400;
-    const staggerMs = 90;
-    const batchSize = 24;
+    const staggerMs = 60;
+    const batchSize = Math.min(heroList.length, 80);
     const t0 = window.setTimeout(() => {
       heroList.slice(0, batchSize).forEach((h, i) => {
         window.setTimeout(() => prefetchHeroMatchupsLargeSample(h.id), i * staggerMs);

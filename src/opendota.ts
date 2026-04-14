@@ -440,11 +440,19 @@ export async function fetchHeroAvgCoreStatsCached(
   return [];
 }
 
-export async function fetchHeroMatchupsCached(heroId: number): Promise<OpenDotaHeroMatchup[]> {
+export async function fetchHeroMatchupsCached(
+  heroId: number,
+  opts?: { timeoutMs?: number; maxAttempts?: number; forceRefresh?: boolean }
+): Promise<OpenDotaHeroMatchup[]> {
   const key = `matchups:${heroId}`;
-  const cached = getCached<OpenDotaHeroMatchup[]>(key, 1000 * 60 * 60 * 24); // 24h
-  if (cached) return cached;
-  const data = await fetchJson<OpenDotaHeroMatchup[]>(`/heroes/${heroId}/matchups`);
+  if (!opts?.forceRefresh) {
+    const cached = getCached<OpenDotaHeroMatchup[]>(key, 1000 * 60 * 60 * 24); // 24h
+    if (cached) return cached;
+  }
+  const data = await fetchJson<OpenDotaHeroMatchup[]>(`/heroes/${heroId}/matchups`, {
+    timeoutMs: opts?.timeoutMs,
+    maxAttempts: opts?.maxAttempts
+  });
   setCached(key, data);
   return data;
 }
