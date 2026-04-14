@@ -108,6 +108,10 @@ export function getCached<T>(key: string, maxAgeMs: number): T | null {
   }
 }
 
+function getCachedAnyAge<T>(key: string): T | null {
+  return getCached<T>(key, Number.MAX_SAFE_INTEGER);
+}
+
 export function setCached<T>(key: string, data: T): void {
   const entry: CacheEntry<T> = { v: CACHE_VERSION, ts: Date.now(), data };
   try {
@@ -118,33 +122,24 @@ export function setCached<T>(key: string, data: T): void {
 }
 
 export function peekCachedHeroStatsAnyAge(): OpenDotaHeroStats[] | null {
-  const data = getCached<OpenDotaHeroStats[]>("heroStats", Number.MAX_SAFE_INTEGER);
+  const data = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
   return data && data.length > 0 ? data : null;
 }
 
 export function peekCachedHeroAvgKdaAnyAge(sampleLimit = 300000): OpenDotaHeroAvgKda[] | null {
-  const data = getCached<OpenDotaHeroAvgKda[]>(
-    `heroAvgKda:${sampleLimit}`,
-    Number.MAX_SAFE_INTEGER
-  );
+  const data = getCachedAnyAge<OpenDotaHeroAvgKda[]>(`heroAvgKda:${sampleLimit}`);
   return data && data.length > 0 ? data : null;
 }
 
 export function peekCachedHeroAvgCoreStatsAnyAge(
   sampleLimit = 300000
 ): OpenDotaHeroAvgCoreStats[] | null {
-  const data = getCached<OpenDotaHeroAvgCoreStats[]>(
-    `heroAvgCoreStats:${sampleLimit}`,
-    Number.MAX_SAFE_INTEGER
-  );
+  const data = getCachedAnyAge<OpenDotaHeroAvgCoreStats[]>(`heroAvgCoreStats:${sampleLimit}`);
   return data && data.length > 0 ? data : null;
 }
 
 export function peekCachedItemMetaStatsAnyAge(sampleLimit = 300000): OpenDotaItemMetaStatRow[] | null {
-  const data = getCached<OpenDotaItemMetaStatRow[]>(
-    `itemMetaStats:v1:${sampleLimit}`,
-    Number.MAX_SAFE_INTEGER
-  );
+  const data = getCachedAnyAge<OpenDotaItemMetaStatRow[]>(`itemMetaStats:v1:${sampleLimit}`);
   return data && data.length > 0 ? data : null;
 }
 
@@ -283,9 +278,15 @@ function parseItemConstantsBundle(data: Record<string, unknown>): {
 export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
   const cached = getCached<OpenDotaHeroStats[]>("heroStats", 1000 * 60 * 60 * 24); // 24h
   if (cached) return cached;
-  const data = await fetchJson<OpenDotaHeroStats[]>("/heroStats");
-  setCached("heroStats", data);
-  return data;
+  try {
+    const data = await fetchJson<OpenDotaHeroStats[]>("/heroStats");
+    setCached("heroStats", data);
+    return data;
+  } catch (err) {
+    const stale = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
+    if (stale && stale.length > 0) return stale;
+    throw err;
+  }
 }
 
 export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<OpenDotaHeroAvgKills[]> {
@@ -325,7 +326,8 @@ export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<Ope
       // try smaller sample on timeout / network issues
     }
   }
-  return [];
+  const stale = getCachedAnyAge<OpenDotaHeroAvgKills[]>(key);
+  return stale ?? [];
 }
 
 export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenDotaHeroAvgKda[]> {
@@ -376,7 +378,8 @@ export async function fetchHeroAvgKdaCached(sampleLimit = 300000): Promise<OpenD
       // try smaller sample on timeout / network issues
     }
   }
-  return [];
+  const stale = getCachedAnyAge<OpenDotaHeroAvgKda[]>(key);
+  return stale ?? [];
 }
 
 export async function fetchHeroAvgCoreStatsCached(
@@ -437,7 +440,8 @@ export async function fetchHeroAvgCoreStatsCached(
       // try smaller sample on timeout / network issues
     }
   }
-  return [];
+  const stale = getCachedAnyAge<OpenDotaHeroAvgCoreStats[]>(key);
+  return stale ?? [];
 }
 
 export async function fetchHeroMatchupsCached(
@@ -449,12 +453,18 @@ export async function fetchHeroMatchupsCached(
     const cached = getCached<OpenDotaHeroMatchup[]>(key, 1000 * 60 * 60 * 24); // 24h
     if (cached) return cached;
   }
-  const data = await fetchJson<OpenDotaHeroMatchup[]>(`/heroes/${heroId}/matchups`, {
-    timeoutMs: opts?.timeoutMs,
-    maxAttempts: opts?.maxAttempts
-  });
-  setCached(key, data);
-  return data;
+  try {
+    const data = await fetchJson<OpenDotaHeroMatchup[]>(`/heroes/${heroId}/matchups`, {
+      timeoutMs: opts?.timeoutMs,
+      maxAttempts: opts?.maxAttempts
+    });
+    setCached(key, data);
+    return data;
+  } catch (err) {
+    const stale = getCachedAnyAge<OpenDotaHeroMatchup[]>(key);
+    if (stale && stale.length > 0) return stale;
+    throw err;
+  }
 }
 
 export async function fetchHeroMatchupsLargeSampleCached(
@@ -527,7 +537,8 @@ export async function fetchHeroMatchupsLargeSampleCached(
         }
       }
 
-      return [];
+      const stale = getCachedAnyAge<OpenDotaHeroMatchup[]>(key);
+      return stale ?? [];
     } finally {
       inFlightHeroMatchupsLarge.delete(heroId);
     }
@@ -580,7 +591,7 @@ export async function fetchHeroItemPopularityCached(
     setCached(key, data);
     return data;
   } catch {
-    return null;
+    return getCachedAnyAge<OpenDotaHeroItemPopularity>(key);
   }
 }
 
@@ -588,9 +599,15 @@ export async function fetchItemTimingsCached(): Promise<OpenDotaItemTimingScenar
   const key = "itemTimings";
   const cached = getCached<OpenDotaItemTimingScenario[]>(key, 1000 * 60 * 60 * 24);
   if (cached) return cached;
-  const data = await fetchJson<OpenDotaItemTimingScenario[]>("/scenarios/itemTimings");
-  setCached(key, data);
-  return data;
+  try {
+    const data = await fetchJson<OpenDotaItemTimingScenario[]>("/scenarios/itemTimings");
+    setCached(key, data);
+    return data;
+  } catch (err) {
+    const stale = getCachedAnyAge<OpenDotaItemTimingScenario[]>(key);
+    if (stale) return stale;
+    throw err;
+  }
 }
 
 /**
@@ -660,7 +677,8 @@ export async function fetchHeroItemPurchaseOrderCached(
     }
   }
 
-  return [];
+  const stale = getCachedAnyAge<OpenDotaHeroItemPurchaseOrderRow[]>(key);
+  return stale ?? [];
 }
 
 /**
@@ -749,16 +767,14 @@ export async function fetchItemMetaStatsCached(sampleLimit = 300000): Promise<Op
     }
   }
 
-  return [];
+  const stale = getCachedAnyAge<OpenDotaItemMetaStatRow[]>(key);
+  return stale ?? [];
 }
 
 const ITEM_CONSTANTS_BUNDLE_CACHE_KEY = "itemConstantsBundle:v2";
 
 export function peekCachedItemConstantsAnyAge(): Record<string, OpenDotaItemConstant> | null {
-  const cached = getCached<ItemConstantsBundleCached>(
-    ITEM_CONSTANTS_BUNDLE_CACHE_KEY,
-    Number.MAX_SAFE_INTEGER
-  );
+  const cached = getCachedAnyAge<ItemConstantsBundleCached>(ITEM_CONSTANTS_BUNDLE_CACHE_KEY);
   if (!cached) return null;
   const size = Object.keys(cached.constants).length;
   return size > 0 ? cached.constants : null;
@@ -779,16 +795,27 @@ export async function fetchItemConstantsBundleCached(): Promise<{
       usedAsComponentKeys: new Set(cached.usedAsComponentKeys)
     };
   }
-  const raw = await fetchItemConstantsRaw();
-  const { constants, usedAsComponentKeys } = parseItemConstantsBundle(raw);
-  if (Object.keys(constants).length === 0) {
-    throw new Error("Справочник предметов пуст после разбора");
+  try {
+    const raw = await fetchItemConstantsRaw();
+    const { constants, usedAsComponentKeys } = parseItemConstantsBundle(raw);
+    if (Object.keys(constants).length === 0) {
+      throw new Error("Справочник предметов пуст после разбора");
+    }
+    setCached(ITEM_CONSTANTS_BUNDLE_CACHE_KEY, {
+      constants,
+      usedAsComponentKeys: [...usedAsComponentKeys]
+    });
+    return { constants, usedAsComponentKeys };
+  } catch (err) {
+    const stale = getCachedAnyAge<ItemConstantsBundleCached>(ITEM_CONSTANTS_BUNDLE_CACHE_KEY);
+    if (stale && Object.keys(stale.constants).length > 0) {
+      return {
+        constants: stale.constants,
+        usedAsComponentKeys: new Set(stale.usedAsComponentKeys)
+      };
+    }
+    throw err;
   }
-  setCached(ITEM_CONSTANTS_BUNDLE_CACHE_KEY, {
-    constants,
-    usedAsComponentKeys: [...usedAsComponentKeys]
-  });
-  return { constants, usedAsComponentKeys };
 }
 
 export async function fetchItemConstantsCached(): Promise<Record<string, OpenDotaItemConstant>> {
