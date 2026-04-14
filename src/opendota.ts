@@ -1,4 +1,4 @@
-const API_BASE = "https://api.opendota.com/api";
+const API_BASE = "/api/od";
 
 export type OpenDotaHeroStats = {
   id: number;
