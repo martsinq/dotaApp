@@ -1,4 +1,5 @@
 const API_BASE = "/api/od";
+const DIRECT_API_BASE = "https://api.opendota.com/api";
 
 export type OpenDotaHeroStats = {
   id: number;
@@ -187,38 +188,41 @@ type FetchJsonOptions = {
 };
 
 async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<T> {
-  const url = `${API_BASE}${path}`;
   const timeoutMs = opts.timeoutMs ?? 12000;
   const maxAttempts = opts.maxAttempts ?? 2;
   const retryBackoffMs = opts.retryBackoffMs ?? 450;
   let lastError: Error | null = null;
+  const bases = [API_BASE, DIRECT_API_BASE];
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  for (const base of bases) {
+    const url = `${base}${path}`;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) {
-        throw new Error(`OpenDota error ${res.status} for ${path}`);
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) {
+          throw new Error(`OpenDota error ${res.status} for ${path}`);
+        }
+        return (await res.json()) as T;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          lastError = new Error(`OpenDota timeout for ${path}`);
+        } else if (err instanceof Error) {
+          // Covers the common browser network/CORS error: "Failed to fetch"
+          lastError = new Error(`OpenDota network error for ${path}: ${err.message}`);
+        } else {
+          lastError = new Error(`OpenDota unknown error for ${path}`);
+        }
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, retryBackoffMs * attempt)
+          );
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
       }
-      return (await res.json()) as T;
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        lastError = new Error(`OpenDota timeout for ${path}`);
-      } else if (err instanceof Error) {
-        // Covers the common browser network/CORS error: "Failed to fetch"
-        lastError = new Error(`OpenDota network error for ${path}: ${err.message}`);
-      } else {
-        lastError = new Error(`OpenDota unknown error for ${path}`);
-      }
-      if (attempt < maxAttempts) {
-        await new Promise((resolve) =>
-          window.setTimeout(resolve, retryBackoffMs * attempt)
-        );
-      }
-    } finally {
-      window.clearTimeout(timeoutId);
     }
   }
 
