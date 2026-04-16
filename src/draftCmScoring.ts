@@ -19,11 +19,21 @@ const MIN_MATCHUP_GAMES = 10;
  * Таблицы «как кандидат играет против фокус-героя» (как в Draft.tsx):
  * положительное значение — кандидат в плюсе в матчапе (контрпик фокуса).
  */
+export type BuildCounterTablesOptions = {
+  /** Ограничить число «фокус-героев» (последние N в порядке пиков) — меньше запросов матчапов, быстрее CM-бот. */
+  maxFocusHeroes?: number;
+};
+
 export async function buildCounterTablesFromHeroes(
   focusHeroNames: string[],
-  heroByName: Record<string, OpenDotaHeroStats>
+  heroByName: Record<string, OpenDotaHeroStats>,
+  options?: BuildCounterTablesOptions
 ): Promise<Record<string, Record<string, number>>> {
-  const unique = Array.from(new Set(focusHeroNames)).filter(Boolean);
+  let unique = Array.from(new Set(focusHeroNames)).filter(Boolean);
+  const cap = options?.maxFocusHeroes;
+  if (cap != null && cap > 0 && unique.length > cap) {
+    unique = unique.slice(-cap);
+  }
   if (unique.length === 0) return {};
 
   const heroById: Record<number, OpenDotaHeroStats> = {};

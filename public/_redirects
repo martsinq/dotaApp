@@ -2,6 +2,11 @@
 # Статические файлы (sitemap.xml, robots.txt, *.html в корне) имеют приоритет.
 # Fallback for stale cached HTML that still requests /src/main.tsx.
 #
+# Канонический домен: Cloudflare Pages → dota2next.pro (деплой на Pages, не Yandex-бакет).
+# Код — только число (301), без суффикса ! — иначе Cloudflare Pages игнорирует строку.
+/  https://dota2next.pro/  301
+/*  https://dota2next.pro/:splat  301
+
 # ВАЖНО: правило /* → index.html 200 отдаёт HTML на ЛЮБОЙ путь без файла, включая /api/od/*.
 # Тогда fetch('/api/od/heroStats') получает index.html при 200 — JSON.parse падает, «нет данных».
 # Сначала уводим API на worker (302 на внешний URL разрешён; 200-rewrite на внешний — нет).

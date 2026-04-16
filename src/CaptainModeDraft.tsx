@@ -295,7 +295,8 @@ export function CaptainModeDraft() {
 
     const lockedStep = stepIndex;
     setBotThinking(true);
-    const delay = 550 + Math.random() * 650;
+    /** Короткая пауза «как живой игрок»; тяжесть — в загрузке матчапов, не в sleep. */
+    const delay = 90 + Math.random() * 140;
     const timer = window.setTimeout(async () => {
       try {
         const snap = latestRef.current;
@@ -325,11 +326,14 @@ export function CaptainModeDraft() {
           const botPicks = t.team === "radiant" ? radiantPicks : direPicks;
 
           // Баним прежде всего тех, кто хорошо играет ПРОТИВ уже взятых героев бота.
-          const vsBotOwn = botPicks.length > 0 ? await buildCounterTablesFromHeroes(botPicks, by) : {};
-          const vsEnemy = await buildCounterTablesFromHeroes(
-            t.team === "radiant" ? direPicks : radiantPicks,
-            by
-          );
+          const enemyPicksForBan = t.team === "radiant" ? direPicks : radiantPicks;
+          const cmCounterOpts = { maxFocusHeroes: 4 } as const;
+          const [vsBotOwn, vsEnemy] = await Promise.all([
+            botPicks.length > 0
+              ? buildCounterTablesFromHeroes(botPicks, by, cmCounterOpts)
+              : Promise.resolve({}),
+            buildCounterTablesFromHeroes(enemyPicksForBan, by, cmCounterOpts)
+          ]);
 
           let hero = "";
           if (t.team === "dire") {
@@ -366,8 +370,13 @@ export function CaptainModeDraft() {
           if (empties.length === 0) return;
           const radiantPicks = r.filter(Boolean);
           const direPicks = d.filter(Boolean);
-          const vsRadiant = await buildCounterTablesFromHeroes(radiantPicks, by);
-          const vsDireOwn = direPicks.length > 0 ? await buildCounterTablesFromHeroes(direPicks, by) : {};
+          const cmCounterOpts = { maxFocusHeroes: 4 } as const;
+          const [vsRadiant, vsDireOwn] = await Promise.all([
+            buildCounterTablesFromHeroes(radiantPicks, by, cmCounterOpts),
+            direPicks.length > 0
+              ? buildCounterTablesFromHeroes(direPicks, by, cmCounterOpts)
+              : Promise.resolve({})
+          ]);
           let best: { hero: string; slotIndex: number; score: number } | null = null;
           for (const slotIndex of empties) {
             const hero = pickDireHeroWithIntel(
@@ -406,9 +415,13 @@ export function CaptainModeDraft() {
           if (empties.length === 0) return;
           const radiantPicks = r.filter(Boolean);
           const direPicks = d.filter(Boolean);
-          const vsDire = await buildCounterTablesFromHeroes(direPicks, by);
-          const vsRadiantOwn =
-            radiantPicks.length > 0 ? await buildCounterTablesFromHeroes(radiantPicks, by) : {};
+          const cmCounterOpts = { maxFocusHeroes: 4 } as const;
+          const [vsDire, vsRadiantOwn] = await Promise.all([
+            buildCounterTablesFromHeroes(direPicks, by, cmCounterOpts),
+            radiantPicks.length > 0
+              ? buildCounterTablesFromHeroes(radiantPicks, by, cmCounterOpts)
+              : Promise.resolve({})
+          ]);
           let best: { hero: string; slotIndex: number; score: number } | null = null;
           for (const slotIndex of empties) {
             const hero = pickRadiantHeroWithIntel(

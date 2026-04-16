@@ -1,10 +1,138 @@
 const WORKER_API_BASE = "https://odota-proxy.nekit03102003.workers.dev/api/od";
-const API_BASE = "/api/od";
+const API_BASE = resolveApiBase();
 const PAGES_API_BASE = "https://dotaapp.pages.dev/api/od";
 /** Последний шанс, если все прокси недоступны (CORS у публичного API обычно открыт). */
 const DIRECT_API_BASE = "https://api.opendota.com/api";
 const HEROES_STATIC_FALLBACK_URL =
   "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
+
+/**
+ * Если в бандл не попал VITE_OPENDOTA_API_BASE (старый деплой / кэш CDN), на перечисленных в
+ * `isYandexStaticWebsiteHost` хостах всё равно ходим в рабочий шлюз.
+ */
+const YANDEX_ODOTA_GATEWAY_FALLBACK =
+  "https://d5dmq25bnlngd2477sha.y3q8o1jq.apigw.yandexcloud.net/api/od";
+
+function normalizeBaseUrl(s: string): string {
+  return s.endsWith("/") ? s.slice(0, -1) : s;
+}
+
+/** Доп. хосты той же статики, что и `*.website.yandexcloud.net` (кастомный домен на Yandex CDN). */
+function parseCommaSeparatedHosts(raw: unknown): string[] {
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+const YANDEX_WEBSITE_EXTRA_HOSTS = parseCommaSeparatedHosts(
+  import.meta.env.VITE_YANDEX_WEBSITE_HOSTS
+);
+
+/** Статический сайт на Yandex Object Storage / CDN (включая кастомный домен из .env). */
+function isYandexStaticWebsiteHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h.endsWith("website.yandexcloud.net") || h.endsWith("storage.yandexcloud.net")) {
+    return true;
+  }
+  if (h === "dota2next.pro" || h === "www.dota2next.pro") {
+    return true;
+  }
+  return YANDEX_WEBSITE_EXTRA_HOSTS.includes(h);
+}
+
+/**
+ * На Cloudflare Pages + custom domain с `public/_redirects` нужен именно относительный `/api/od`.
+ * Если в .env задан URL воркера, при сборке он подставлялся сюда и обходил тот же путь, что на dotaapp.pages.dev.
+ */
+function resolveApiBase(): string {
+  const raw = import.meta.env.VITE_OPENDOTA_API_BASE;
+  const fromEnv = typeof raw === "string" ? raw.trim() : "";
+
+  // В dev всегда относительный путь: иначе при «просочившемся» из .env URL воркера
+  // `opendotaApiBases` не ставит первым localhost:5173/api/od и Vite-прокси не используется.
+  if (import.meta.env.DEV) {
+    return "/api/od";
+  }
+
+  if (typeof window !== "undefined") {
+    const h = window.location.hostname;
+    // Только реальный Cloudflare Pages (*.pages.dev). Кастомный домен на Yandex CDN
+    // не должен ходить в относительный `/api/od` — там нет CF _redirects на Worker.
+    const onCloudflareSite = h.endsWith(".pages.dev");
+    const onYandexStatic = isYandexStaticWebsiteHost(h);
+    let effective = fromEnv;
+    if (onYandexStatic && !effective) {
+      effective = YANDEX_ODOTA_GATEWAY_FALLBACK;
+    }
+
+    if (onCloudflareSite && !onYandexStatic) {
+      return "/api/od";
+    }
+    if (onYandexStatic && effective) {
+      return normalizeBaseUrl(effective);
+    }
+  }
+
+  if (!fromEnv) return "/api/od";
+  return normalizeBaseUrl(fromEnv);
+}
+
+const SAME_ORIGIN_API_OD = "/api/od";
+
+/** Как на Cloudflare Pages: `public/_redirects` шлёт `/api/od/*`302 на Worker — тот же путь, что «просто работает» на dotaapp.pages.dev. */
+function useCloudflarePagesApiOdRedirectFirst(): boolean {
+  if (typeof window === "undefined") return false;
+  if (import.meta.env.DEV) return false;
+  const h = window.location.hostname;
+  if (isYandexStaticWebsiteHost(h)) {
+    return false;
+  }
+  return h.endsWith(".pages.dev");
+}
+
+/**
+ * Порядок баз: CF Pages / свой домен с _redirects → сначала `/api/od`; Yandex/Object Storage → без относительного `/api/od`; иначе Worker.
+ */
+function opendotaApiBases(): string[] {
+  const skipRelative =
+    typeof window !== "undefined" &&
+    API_BASE.startsWith("/") &&
+    (() => {
+      const h = window.location.hostname;
+      return isYandexStaticWebsiteHost(h) || h.endsWith("yandexcloud.net");
+    })();
+
+  let candidates: string[];
+  if (import.meta.env.DEV && !skipRelative) {
+    candidates = [SAME_ORIGIN_API_OD, WORKER_API_BASE, PAGES_API_BASE, DIRECT_API_BASE];
+  } else if (useCloudflarePagesApiOdRedirectFirst()) {
+    candidates = [
+      SAME_ORIGIN_API_OD,
+      WORKER_API_BASE,
+      API_BASE,
+      PAGES_API_BASE,
+      DIRECT_API_BASE
+    ];
+  } else if (!API_BASE.startsWith("/")) {
+    // Прод вне Cloudflare Pages (например Yandex): сначала заданный base (API Gateway),
+    // worker оставляем только как аварийный fallback.
+    candidates = [API_BASE, PAGES_API_BASE, DIRECT_API_BASE, WORKER_API_BASE];
+  } else {
+    candidates = [WORKER_API_BASE, API_BASE, PAGES_API_BASE, DIRECT_API_BASE];
+  }
+
+  candidates = candidates.filter((b) => !(skipRelative && b === API_BASE));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const b of candidates) {
+    if (seen.has(b)) continue;
+    seen.add(b);
+    out.push(b);
+  }
+  return out;
+}
 
 export type OpenDotaHeroStats = {
   id: number;
@@ -24,6 +152,15 @@ export type OpenDotaHeroStats = {
   "6_pick": number; "6_win": number;
   "7_pick": number; "7_win": number;
   "8_pick": number; "8_win": number;
+};
+
+export type HeroStatsCachedResult = {
+  stats: OpenDotaHeroStats[];
+  /**
+   * `true`, если после ошибки сети/API (429, таймаут и т.д.) показан снимок из localStorage,
+   * а не свежий ответ OpenDota.
+   */
+  fromStaleCacheAfterError: boolean;
 };
 
 type OpenDotaHeroBasic = {
@@ -144,13 +281,13 @@ type CacheEntry<T> = {
   data: T;
 };
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 6;
 
 /** Параллельные вызовы fetchHeroMatchupsLargeSampleCached для одного hero_id — один сетевой запрос. */
 const inFlightHeroMatchupsLarge = new Map<number, Promise<OpenDotaHeroMatchup[]>>();
 
 /** Несколько экранов дергают heroStats при монтировании — один полёт до сети и localStorage. */
-let inFlightHeroStats: Promise<OpenDotaHeroStats[]> | null = null;
+let inFlightHeroStats: Promise<HeroStatsCachedResult> | null = null;
 
 function cacheKey(key: string): string {
   return `opendota:${CACHE_VERSION}:${key}`;
@@ -197,13 +334,19 @@ function heroStatsHasRealPubData(stats: OpenDotaHeroStats[]): boolean {
       h["7_pick"] +
       h["8_pick"];
   }
-  return sum > 50_000;
+  // Порог ниже «миллионов», чтобы не отбраковывать неполный, но уже не нулевой ответ API.
+  return sum > 10_000;
+}
+
+/** `false` — ответ с `/heroes` или fallback воркера: все `_pick` = 0, в UI винрейт = 50%. */
+export function heroPubMetaIsLive(stats: OpenDotaHeroStats[]): boolean {
+  return stats.length > 0 && heroStatsHasRealPubData(stats);
 }
 
 async function fetchHeroStatsFromBase(base: string): Promise<OpenDotaHeroStats[]> {
   const url = `${base}/heroStats`;
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 28000);
+  const timeoutId = window.setTimeout(() => controller.abort(), 95000);
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
@@ -219,6 +362,12 @@ export function peekCachedHeroStatsAnyAge(): OpenDotaHeroStats[] | null {
   const data = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
   if (!data || data.length === 0) return null;
   return heroStatsHasRealPubData(data) ? data : null;
+}
+
+/** Любой сохранённый снимок heroStats (в т.ч. без bracket picks) — для мгновенного UI и аварийного показа. */
+export function peekCachedHeroStatsRawAnyAge(): OpenDotaHeroStats[] | null {
+  const data = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
+  return data && data.length > 0 ? data : null;
 }
 
 export function peekCachedHeroAvgKdaAnyAge(sampleLimit = 300000): OpenDotaHeroAvgKda[] | null {
@@ -252,12 +401,13 @@ async function readJsonResponse<T>(res: Response, pathForErrors: string): Promis
     throw new Error(`OpenDota: получен HTML вместо JSON для ${pathForErrors} (проверьте _redirects /api/od)`);
   }
   const text = await res.text();
-  const trimmed = text.trimStart();
+  // BOM в начале тела ломает JSON.parse (встречается у API Gateway / прокси).
+  const trimmed = text.replace(/^\uFEFF/, "").trimStart();
   if (trimmed.startsWith("<") || trimmed.startsWith("<!")) {
     throw new Error(`OpenDota: тело ответа похоже на HTML для ${pathForErrors}`);
   }
   try {
-    return JSON.parse(text) as T;
+    return JSON.parse(trimmed) as T;
   } catch {
     throw new Error(`OpenDota: невалидный JSON для ${pathForErrors}`);
   }
@@ -270,8 +420,7 @@ async function fetchJson<T>(path: string, opts: FetchJsonOptions = {}): Promise<
   const maxAttempts = opts.maxAttempts ?? (isExplorer ? 1 : 2);
   const retryBackoffMs = opts.retryBackoffMs ?? 450;
   let lastError: Error | null = null;
-  /** Сначала прокси; в конце прямой API — если Pages отдал SPA-HTML на /api/od, см. public/_redirects. */
-  const bases = [API_BASE, WORKER_API_BASE, PAGES_API_BASE, DIRECT_API_BASE];
+  const bases = opendotaApiBases();
 
   for (const base of bases) {
     const url = `${base}${path}`;
@@ -315,11 +464,10 @@ const ITEM_CONSTANTS_FALLBACK_URL =
  * Большой JSON (`/constants/items` ~300+ KB) часто не успевает за 12 с на OpenDota — отдельный запрос с длинным таймаутом и зеркалом.
  */
 async function fetchItemConstantsRaw(): Promise<Record<string, unknown>> {
-  const localUrl = `${API_BASE}/constants/items`;
-  const workerUrl = `${WORKER_API_BASE}/constants/items`;
-  const pagesUrl = `${PAGES_API_BASE}/constants/items`;
-  const directUrl = `${DIRECT_API_BASE}/constants/items`;
-  const urls = [localUrl, workerUrl, pagesUrl, directUrl, ITEM_CONSTANTS_FALLBACK_URL];
+  const urls = [
+    ...opendotaApiBases().map((b) => `${b}/constants/items`),
+    ITEM_CONSTANTS_FALLBACK_URL
+  ];
   const timeoutMs = 45000;
   const attemptsPerUrl = 3;
   let lastError: Error | null = null;
@@ -400,18 +548,24 @@ function parseItemConstantsBundle(data: Record<string, unknown>): {
   return { constants, usedAsComponentKeys };
 }
 
-export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
+export async function loadHeroStatsCached(): Promise<HeroStatsCachedResult> {
   const cached = getCached<OpenDotaHeroStats[]>("heroStats", 1000 * 60 * 60 * 24); // 24h
-  if (cached && heroStatsHasRealPubData(cached)) return cached;
+  if (cached && heroStatsHasRealPubData(cached)) {
+    return { stats: cached, fromStaleCacheAfterError: false };
+  }
   if (inFlightHeroStats) return inFlightHeroStats;
 
-  inFlightHeroStats = (async (): Promise<OpenDotaHeroStats[]> => {
+  inFlightHeroStats = (async (): Promise<HeroStatsCachedResult> => {
     try {
       try {
         let data = await fetchJson<OpenDotaHeroStats[]>("/heroStats", {
-          timeoutMs: 28000,
-          maxAttempts: 2
+          // Worker буферизует тело /heroStats; OpenDota может отдавать ответ десятки секунд.
+          timeoutMs: 95000,
+          maxAttempts: 1
         });
+        if (!Array.isArray(data)) {
+          throw new Error("OpenDota: /heroStats — ожидался массив героев");
+        }
         if (!heroStatsHasRealPubData(data)) {
           try {
             const direct = await fetchHeroStatsFromBase(DIRECT_API_BASE);
@@ -424,12 +578,15 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
         }
         if (heroStatsHasRealPubData(data)) {
           setCached("heroStats", data);
-          return data;
+          return { stats: data, fromStaleCacheAfterError: false };
         }
         throw new Error("heroStats degraded (zero pub picks)");
       } catch (err) {
         const stale = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
-        if (stale && heroStatsHasRealPubData(stale)) return stale;
+        if (stale && heroStatsHasRealPubData(stale)) {
+          return { stats: stale, fromStaleCacheAfterError: true };
+        }
+
         let basics: OpenDotaHeroBasic[] = [];
         try {
           basics = await fetchJson<OpenDotaHeroBasic[]>("/heroes", {
@@ -467,7 +624,11 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
         }));
         if (normalized.length > 0) {
           // Не пишем в кэш «heroStats» без брекетов — иначе снова 50% / 0% пика до истечения TTL.
-          return normalized;
+          return { stats: normalized, fromStaleCacheAfterError: false };
+        }
+        const lastResort = getCachedAnyAge<OpenDotaHeroStats[]>("heroStats");
+        if (lastResort && lastResort.length > 0) {
+          return { stats: lastResort, fromStaleCacheAfterError: true };
         }
         throw err;
       }
@@ -477,6 +638,10 @@ export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
   })();
 
   return inFlightHeroStats;
+}
+
+export async function fetchHeroStatsCached(): Promise<OpenDotaHeroStats[]> {
+  return (await loadHeroStatsCached()).stats;
 }
 
 export async function fetchHeroAvgKillsCached(sampleLimit = 300000): Promise<OpenDotaHeroAvgKills[]> {
@@ -762,7 +927,10 @@ export async function fetchHeroMatchupsWithFallback(heroId: number): Promise<Ope
   try {
     return await fetchHeroMatchupsCached(heroId);
   } catch {
-    return [];
+    const small = getCachedAnyAge<OpenDotaHeroMatchup[]>(`matchups:${heroId}`);
+    if (small && small.length > 0) return small;
+    const large = getCachedAnyAge<OpenDotaHeroMatchup[]>(`matchupsLarge:${heroId}:300000`);
+    return large ?? [];
   }
 }
 

@@ -1,4 +1,5 @@
 const UPSTREAM_BASE = "https://api.opendota.com/api";
+const STRATZ_HEROES_URL = "https://api.stratz.com/api/v1/Hero";
 const HEROES_STATIC_FALLBACK_URL =
   "https://raw.githubusercontent.com/odota/dotaconstants/master/build/heroes.json";
 /** Опционально в Dashboard → Settings → Variables: OPENDOTA_API_KEY — снижает 429 при лимитах OpenDota. */
@@ -94,7 +95,7 @@ function normalizeHeroStatsFromHeroes(heroes) {
     }));
 }
 
-async function fetchHeroStatsFallbackPayload() {
+async function fetchHeroStatsFallbackPayload(env) {
   // 1) Lightweight OpenDota endpoint as primary fallback.
   try {
     const heroesResp = await fetchWithTimeout(`${UPSTREAM_BASE}/heroes`, 10000);
@@ -107,7 +108,51 @@ async function fetchHeroStatsFallbackPayload() {
     // continue to static fallback
   }
 
-  // 2) Static hero constants mirror (independent from OpenDota API rate-limit).
+  // 2) STRATZ heroes endpoint as secondary fallback (requires token in Worker env).
+  try {
+    const token = (typeof env !== "undefined" && env?.STRATZ_API_TOKEN ? String(env.STRATZ_API_TOKEN).trim() : "");
+    if (token) {
+      const stratzResp = await fetchWithTimeout(
+        STRATZ_HEROES_URL,
+        12000,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      if (stratzResp.ok) {
+        const stratzJson = await stratzResp.json();
+        const list = Array.isArray(stratzJson)
+          ? stratzJson
+          : (stratzJson && typeof stratzJson === "object" && Array.isArray(stratzJson.data) ? stratzJson.data : []);
+        const normalized = normalizeHeroStatsFromHeroes(
+          list.map((h) => {
+            const id = Number(h?.id ?? h?.heroId);
+            const display = typeof h?.displayName === "string" ? h.displayName : "";
+            const shortName = typeof h?.shortName === "string" ? h.shortName : "";
+            const internal =
+              typeof h?.name === "string" && h.name.trim()
+                ? h.name
+                : (shortName ? `npc_dota_hero_${shortName}` : "");
+            return {
+              id,
+              name: internal,
+              localized_name: display || shortName || internal,
+              primary_attr: "all",
+              attack_type: "Melee",
+              roles: []
+            };
+          })
+        );
+        if (normalized.length > 0) return normalized;
+      }
+    }
+  } catch {
+    // continue to static fallback
+  }
+
+  // 3) Static hero constants mirror (independent from OpenDota API rate-limit).
   try {
     const staticResp = await fetchWithTimeout(HEROES_STATIC_FALLBACK_URL, 10000);
     if (staticResp.ok) {
@@ -121,7 +166,7 @@ async function fetchHeroStatsFallbackPayload() {
     // continue to final safe fallback
   }
 
-  // 3) Final safe fallback: never return upstream_429 for /heroStats.
+  // 4) Final safe fallback: never return upstream_429 for /heroStats.
   return [];
 }
 
@@ -131,6 +176,34 @@ function fallbackHeroStatsResponse(policy, payload, cacheStatus) {
     headers: { "content-type": "application/json; charset=utf-8" }
   });
   return withCacheHeaders(fallbackResp, policy.ttl, policy.staleSeconds, cacheStatus);
+}
+
+/** Короткий кэш только для браузера: FALLBACK не кладём в Worker Cache API — иначе «ядовитый» HIT на часы. */
+function fallbackHeroStatsResponseEphemeral(payload, cacheStatus) {
+  const fallbackResp = new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" }
+  });
+  const headers = new Headers(fallbackResp.headers);
+  headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=0");
+  headers.set("X-Odota-Proxy-Cache", cacheStatus);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    headers.set(k, v);
+  }
+  return new Response(fallbackResp.body, { status: 200, headers });
+}
+
+/**
+ * Отдельный ключ для heroStats в Cache API: раньше FALLBACK кэшировался с тем же ключом, что и удачный JSON —
+ * после одного 429 все получали HIT с нулевыми пиками.
+ * Версия в query не уходит в OpenDota (кэш-ключ строим только для `caches.default`).
+ */
+const HERO_STATS_CACHE_BUSTER = "hs5";
+
+function heroStatsCacheKeyRequest(upstreamUrl) {
+  const u = new URL(upstreamUrl);
+  u.searchParams.set("_odproxy_ck", HERO_STATS_CACHE_BUSTER);
+  return new Request(u.toString(), { method: "GET" });
 }
 
 function upstreamUrlWithKey(pathAndQuery, env) {
@@ -161,11 +234,32 @@ async function readCached(cache, keyRequest) {
   return cache.match(keyRequest);
 }
 
-async function fetchWithTimeout(url, timeoutMs) {
+async function fetchWithTimeout(url, timeoutMs, init) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Читает весь ответ в память. Иначе `fetch()` на стороне Worker резолвится по заголовкам,
+ * а клиентский браузер долго тянет тело — у него срабатывает Abort и кажется «вечная загрузка».
+ */
+async function fetchUpstreamOkBodyBuffered(url, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    if (!r.ok) {
+      return { type: "upstream_error", status: r.status, response: r };
+    }
+    const body = await r.arrayBuffer();
+    return { type: "success", body };
+  } catch (error) {
+    return { type: "network", error };
   } finally {
     clearTimeout(timeout);
   }
@@ -186,7 +280,10 @@ export default {
     const upstreamPath = url.pathname.replace(/^\/api\/od/, "");
     const upstreamWithQuery = upstreamUrlWithKey(`${upstreamPath}${url.search}`, env);
     const cache = caches.default;
-    const cacheKey = new Request(upstreamWithQuery, { method: "GET" });
+    const cacheKey =
+      url.pathname === "/api/od/heroStats"
+        ? heroStatsCacheKeyRequest(upstreamWithQuery)
+        : new Request(upstreamWithQuery, { method: "GET" });
 
     const cached = await readCached(cache, cacheKey);
     if (cached) {
@@ -194,8 +291,39 @@ export default {
     }
 
     try {
-      const upstreamTimeoutMs = url.pathname === "/api/od/heroStats" ? 28000 : 12000;
-      const upstreamResp = await fetchWithTimeout(upstreamWithQuery, upstreamTimeoutMs);
+      if (url.pathname === "/api/od/heroStats") {
+        const buffered = await fetchUpstreamOkBodyBuffered(upstreamWithQuery, 90000);
+        if (buffered.type === "success") {
+          const jsonResp = new Response(buffered.body, {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" }
+          });
+          const proxied = withCacheHeaders(jsonResp, policy.ttl, policy.staleSeconds, "MISS");
+          ctx.waitUntil(cache.put(cacheKey, proxied.clone()));
+          return proxied;
+        }
+        if (buffered.type === "upstream_error") {
+          const st = buffered.status;
+          if (st === 429 || st >= 500) {
+            const stale = await readCached(cache, cacheKey);
+            if (stale) return withCacheHeaders(stale, policy.ttl, policy.staleSeconds, "STALE");
+            const payload = await fetchHeroStatsFallbackPayload(env);
+            // Не cache.put: иначе следующий клиент получит HIT с нулевыми пиками вместо повторного запроса к OpenDota.
+            return fallbackHeroStatsResponseEphemeral(payload, "FALLBACK");
+          }
+          const er = buffered.response;
+          return withCors(
+            new Response(er.body, {
+              status: er.status,
+              statusText: er.statusText,
+              headers: er.headers
+            })
+          );
+        }
+        throw buffered.error;
+      }
+
+      const upstreamResp = await fetchWithTimeout(upstreamWithQuery, 12000);
       if (upstreamResp.ok) {
         const proxied = withCacheHeaders(upstreamResp, policy.ttl, policy.staleSeconds, "MISS");
         ctx.waitUntil(cache.put(cacheKey, proxied.clone()));
@@ -205,14 +333,6 @@ export default {
       if (upstreamResp.status === 429 || upstreamResp.status >= 500) {
         const stale = await readCached(cache, cacheKey);
         if (stale) return withCacheHeaders(stale, policy.ttl, policy.staleSeconds, "STALE");
-
-        // Cold-start fallback for heroStats during OpenDota rate limiting.
-        if (url.pathname === "/api/od/heroStats") {
-          const payload = await fetchHeroStatsFallbackPayload();
-          const proxiedFallback = fallbackHeroStatsResponse(policy, payload, "FALLBACK");
-          ctx.waitUntil(cache.put(cacheKey, proxiedFallback.clone()));
-          return proxiedFallback;
-        }
 
         const emptyFb = shouldEmptyFallbackOnRateLimit(url.pathname);
         if (emptyFb) {
@@ -231,8 +351,8 @@ export default {
       const stale = await readCached(cache, cacheKey);
       if (stale) return withCacheHeaders(stale, policy.ttl, policy.staleSeconds, "STALE");
       if (url.pathname === "/api/od/heroStats") {
-        const payload = await fetchHeroStatsFallbackPayload();
-        return fallbackHeroStatsResponse(policy, payload, "FALLBACK");
+        const payload = await fetchHeroStatsFallbackPayload(env);
+        return fallbackHeroStatsResponseEphemeral(payload, "FALLBACK");
       }
       const emptyFb = shouldEmptyFallbackOnRateLimit(url.pathname);
       if (emptyFb) {

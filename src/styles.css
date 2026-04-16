@@ -484,6 +484,40 @@ button:disabled {
   margin: 0 0 16px;
 }
 
+.warning-banner {
+  background: rgba(210, 170, 60, 0.12);
+  border: 1px solid rgba(210, 170, 60, 0.4);
+  color: #f0d090;
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.warning-banner a {
+  color: #8ec8ff;
+  text-decoration: underline;
+}
+
+.warning-banner code {
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.info-banner {
+  background: rgba(80, 140, 220, 0.12);
+  border: 1px solid rgba(100, 160, 240, 0.4);
+  color: #b8d8ff;
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
 .primary {
   background: linear-gradient(135deg, #b92b2b, var(--accent));
 }

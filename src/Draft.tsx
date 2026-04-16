@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchHeroMatchupsLargeSampleCached,
   fetchHeroMatchupsWithFallback,
-  fetchHeroStatsCached,
   heroPortraitUrlCandidates,
-  peekCachedHeroStatsAnyAge,
+  heroPubMetaIsLive,
+  loadHeroStatsCached,
+  peekCachedHeroStatsRawAnyAge,
   pubWinRatePercent,
   type OpenDotaHeroMatchup,
   type OpenDotaHeroStats
@@ -121,6 +122,10 @@ export function Draft() {
   const [heroByName, setHeroByName] = useState<Record<string, OpenDotaHeroStats>>({});
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  /** Нет живых bracket picks из OpenDota — только список героев, WR в UI = 50%. */
+  const [pubMetaDegraded, setPubMetaDegraded] = useState(false);
+  /** Свежую мету загрузить не удалось; показан последний сохранённый снимок из кэша. */
+  const [pubMetaStaleSnapshot, setPubMetaStaleSnapshot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<HeroStats>({ baseWinRate: {}, counterVs: {} });
   const [draftGridHeight, setDraftGridHeight] = useState<number | null>(null);
@@ -129,7 +134,7 @@ export function Draft() {
   const [autoSuggest, setAutoSuggest] = useState(true);
 
   useEffect(() => {
-    const stale = peekCachedHeroStatsAnyAge();
+    const stale = peekCachedHeroStatsRawAnyAge();
     if (stale && stale.length > 0) {
       const byName: Record<string, OpenDotaHeroStats> = {};
       for (const h of stale) {
@@ -146,6 +151,8 @@ export function Draft() {
       setHeroByName(byName);
       setHeroes(names);
       setStats({ baseWinRate, counterVs: {} });
+      setPubMetaDegraded(!heroPubMetaIsLive(stale));
+      setPubMetaStaleSnapshot(false);
       setIsLoadingData(false);
     }
 
@@ -156,7 +163,7 @@ export function Draft() {
           setIsLoadingData(true);
         }
         setError(null);
-        const heroStats = await fetchHeroStatsCached();
+        const { stats: heroStats, fromStaleCacheAfterError } = await loadHeroStatsCached();
         if (cancelled) return;
 
         const byName: Record<string, OpenDotaHeroStats> = {};
@@ -178,8 +185,32 @@ export function Draft() {
         setHeroByName(byName);
         setHeroes(names);
         setStats({ baseWinRate, counterVs: {} });
+        setPubMetaDegraded(!heroPubMetaIsLive(heroStats));
+        setPubMetaStaleSnapshot(fromStaleCacheAfterError);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Не удалось загрузить данные OpenDota");
+        const emergency = peekCachedHeroStatsRawAnyAge();
+        if (emergency && emergency.length > 0) {
+          const byName: Record<string, OpenDotaHeroStats> = {};
+          for (const h of emergency) {
+            byName[h.localized_name] = h;
+          }
+          const names = emergency
+            .map((h) => h.localized_name)
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b));
+          const baseWinRate: Record<string, number> = {};
+          for (const name of names) {
+            baseWinRate[name] = pubWinRatePercent(byName[name]!);
+          }
+          setHeroByName(byName);
+          setHeroes(names);
+          setStats({ baseWinRate, counterVs: {} });
+          setPubMetaDegraded(!heroPubMetaIsLive(emergency));
+          setPubMetaStaleSnapshot(true);
+          setError(null);
+        } else {
+          setError(e instanceof Error ? e.message : "Не удалось загрузить данные OpenDota");
+        }
       } finally {
         setIsLoadingData(false);
       }
@@ -314,6 +345,36 @@ export function Draft() {
         вражеских героев.
       </p>
       {error && <div className="error-banner">{error}</div>}
+      {pubMetaStaleSnapshot && !isLoadingData && heroes.length > 0 && (
+        <div className="info-banner" role="status">
+          <strong>Показаны сохранённые данные OpenDota.</strong> Свежую мету сейчас загрузить не
+          удалось (сеть, таймаут, лимит API 429 и т.п.). После успешного запроса цифры обновятся
+          сами; ключ и подсказки — в жёлтом блоке ниже (если мета ещё и «пустая»).
+        </div>
+      )}
+      {pubMetaDegraded && !isLoadingData && heroes.length > 0 && (
+        <div className="warning-banner" role="status">
+          <strong>Мета OpenDota недоступна.</strong> Сейчас загружен только список героев (без
+          статистики по брекетам), поэтому винрейт везде ~50%, контрпики не из API. Обычно это лимит{" "}
+          <code>api.opendota.com</code> (429) или отсутствие ключа. В Cloudflare Worker для прокси
+          задайте переменную <code>OPENDOTA_API_KEY</code> (ключ с{" "}
+          <a href="https://www.opendota.com/api-keys" target="_blank" rel="noreferrer">
+            opendota.com/api-keys
+          </a>
+          , не Stratz). Если в воркере задан <code>STRATZ_API_TOKEN</code>, при падении OpenDota
+          подтянется резервный список героев из Stratz. После этого перезапустите деплой воркера и
+          обновите страницу.
+          {import.meta.env.DEV && (
+            <>
+              {" "}
+              <strong>Локально (`npm run dev`):</strong> добавьте{" "}
+              <code>OPENDOTA_API_KEY</code> в <code>.env.development.local</code> (см. комментарии в{" "}
+              <code>.env.development</code>) и перезапустите dev-сервер — ключ подставит прокси Vite,
+              в браузер он не попадает.
+            </>
+          )}
+        </div>
+      )}
 
       <section className="team-select draft-team-select">
         <p className="team-select-title">Выберите команду</p>
