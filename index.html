@@ -21,15 +21,141 @@
     />
     <meta property="og:url" content="https://dota2next.pro/" />
     <link rel="canonical" href="https://dota2next.pro/" />
-    <link rel="icon" href="/siteicon.ico" sizes="any" />
-    <link rel="icon" href="/siteicon.png" type="image/png" sizes="32x32" />
-    <link rel="icon" href="/siteicon.png" type="image/png" sizes="16x16" />
-    <link rel="shortcut icon" href="/siteicon.ico" type="image/x-icon" />
-    <link rel="alternate icon" href="/favicon.ico" type="image/x-icon" />
+    <!-- Favicon: сначала канонический URL и /favicon.ico — так чаще заходят роботы (в т.ч. Яндекс). -->
+    <link
+      rel="icon"
+      type="image/x-icon"
+      href="https://dota2next.pro/favicon.ico"
+    />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any" />
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/favicon.png" sizes="180x180" />
     <title>Dota2Next</title>
+    <!-- Yandex.RTB -->
+    <script>
+      window.yaContextCb = window.yaContextCb || [];
+    </script>
+    <script src="https://yandex.ru/ads/system/context.js" async></script>
+    <!-- Yandex.Metrika counter -->
+    <script type="text/javascript">
+      (function (m, e, t, r, i, k, a) {
+        m[i] =
+          m[i] ||
+          function () {
+            (m[i].a = m[i].a || []).push(arguments);
+          };
+        m[i].l = 1 * new Date();
+        for (var j = 0; j < document.scripts.length; j++) {
+          if (document.scripts[j].src === r) {
+            return;
+          }
+        }
+        k = e.createElement(t);
+        a = e.getElementsByTagName(t)[0];
+        k.async = 1;
+        k.src = r;
+        a.parentNode.insertBefore(k, a);
+      })(window, document, "script", "https://mc.yandex.ru/metrika/tag.js?id=108587758", "ym");
+
+      ym(108587758, "init", {
+        ssr: true,
+        webvisor: true,
+        clickmap: true,
+        ecommerce: "dataLayer",
+        referrer: document.referrer,
+        url: location.href,
+        accurateTrackBounce: true,
+        trackLinks: true,
+      });
+    </script>
+    <!-- /Yandex.Metrika counter -->
+    <style>
+      @media (min-width: 1025px) {
+        :root {
+          /* Уже колонка под РСЯ → больше места контенту; совпадает с отступом #root */
+          --yandex-rtb-gutter: clamp(140px, 14vw, 220px);
+        }
+      }
+      .yandex-rtb-sidebar {
+        position: fixed;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 50;
+        width: min(220px, calc(100vw - 24px));
+        max-width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      .yandex-rtb-sidebar--left {
+        left: 0;
+        padding-left: max(8px, env(safe-area-inset-left, 0px));
+        padding-right: 8px;
+      }
+      .yandex-rtb-sidebar--right {
+        right: 0;
+        padding-right: max(8px, env(safe-area-inset-right, 0px));
+        padding-left: 8px;
+      }
+      @media (min-width: 1025px) {
+        .yandex-rtb-sidebar {
+          width: min(var(--yandex-rtb-gutter), calc(100vw - 24px));
+        }
+      }
+      .yandex-rtb-slot {
+        min-height: 50px;
+      }
+      @media (max-width: 1024px) {
+        .yandex-rtb-sidebar {
+          position: relative;
+          left: auto;
+          right: auto;
+          top: auto;
+          transform: none;
+          width: 100%;
+          max-width: 100%;
+          margin: 0 auto 8px;
+          text-align: center;
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+      }
+    </style>
   </head>
   <body>
+    <noscript>
+      <div>
+        <img
+          src="https://mc.yandex.ru/watch/108587758"
+          style="position: absolute; left: -9999px"
+          alt=""
+        />
+      </div>
+    </noscript>
+    <aside class="yandex-rtb-sidebar yandex-rtb-sidebar--left" aria-label="Реклама слева">
+      <div class="yandex-rtb-slot" id="yandex_rtb_R-A-19119591-1"></div>
+      <script>
+        window.yaContextCb.push(() => {
+          Ya.Context.AdvManager.render({
+            blockId: "R-A-19119591-1",
+            renderTo: "yandex_rtb_R-A-19119591-1",
+          });
+        });
+      </script>
+    </aside>
+    <!-- В кабинете РСЯ создайте отдельный блок для правой колонки и подставьте его id вместо R-A-19119591-2 -->
+    <aside class="yandex-rtb-sidebar yandex-rtb-sidebar--right" aria-label="Реклама справа">
+      <div class="yandex-rtb-slot" id="yandex_rtb_R-A-19119591-2"></div>
+      <script>
+        window.yaContextCb.push(() => {
+          Ya.Context.AdvManager.render({
+            blockId: "R-A-19119591-2",
+            renderTo: "yandex_rtb_R-A-19119591-2",
+          });
+        });
+      </script>
+    </aside>
     <noscript>
       Для работы приложения нужен JavaScript. Dota 2: драфт, мета героев и предметов, матчапы.
     </noscript>
@@ -77,5 +203,48 @@
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- После CSS бандла: контент между двумя колонками РСЯ, по центру полосы; навбар на всю ширину viewport. -->
+    <style id="yandex-rtb-layout-gutter">
+      @media (min-width: 1025px) {
+        :root {
+          --app-body-pad-l: max(24px, env(safe-area-inset-left, 0px));
+          --app-body-pad-r: max(24px, env(safe-area-inset-right, 0px));
+          --app-body-pad-t: max(24px, env(safe-area-inset-top, 0px));
+        }
+        /*
+          Симметричные поля: полоса контента между левым и правым gutter.
+          width: auto + оба margin — центрирование относительно экрана без рекламы.
+        */
+        #root {
+          margin-left: calc(var(--yandex-rtb-gutter) - var(--app-body-pad-l));
+          margin-right: calc(var(--yandex-rtb-gutter) - var(--app-body-pad-r));
+          width: auto;
+          max-width: none;
+          box-sizing: border-box;
+        }
+        #root .container,
+        #root .container-cm {
+          margin-left: auto;
+          margin-right: auto;
+        }
+        /* Первая верхняя панель — на всю ширину экрана. */
+        #root .top-nav:first-of-type {
+          margin-left: calc(-1 * var(--yandex-rtb-gutter)) !important;
+          margin-right: calc(-1 * var(--app-body-pad-r)) !important;
+          margin-top: calc(-1 * var(--app-body-pad-t)) !important;
+          width: 100vw !important;
+          max-width: none !important;
+          box-sizing: border-box !important;
+        }
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: max(12px, env(safe-area-inset-top, 0px))
+            max(12px, env(safe-area-inset-right, 0px))
+            max(12px, env(safe-area-inset-bottom, 0px))
+            max(12px, env(safe-area-inset-left, 0px)) !important;
+        }
+      }
+    </style>
   </body>
 </html>

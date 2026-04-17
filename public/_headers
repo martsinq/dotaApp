@@ -1,3 +1,19 @@
+/favicon.ico
+  Content-Type: image/x-icon
+  Cache-Control: public, max-age=604800
+
+/siteicon.ico
+  Content-Type: image/x-icon
+  Cache-Control: public, max-age=604800
+
+/favicon.png
+  Content-Type: image/png
+  Cache-Control: public, max-age=604800
+
+/siteicon.png
+  Content-Type: image/png
+  Cache-Control: public, max-age=604800
+
 /index.html
   Cache-Control: no-cache, no-store, must-revalidate
 
